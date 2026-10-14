@@ -8,17 +8,19 @@
 
 四个数据源（全部走"切片/过滤/小包"，绝不下全美总包）：
   1. Overture Maps (addresses)  —— `overturemaps download --bbox=...` 云端按框切
-  2. USDOT NAD (ArcGIS REST)    —— FeatureServer query + 分页（官方图层不可匿名查询时
-                                   自动回退到 ArcGIS Online 同名镜像）
+  2. USDOT NAD (ArcGIS REST)    —— **多候选自愈**：依次探测官方 item 图层 + ArcGIS Online
+                                   同名镜像 + 搜索结果，谁在 runner 上答话就用谁；
+                                   字段名（addr_* / Add_Number / STREET …）自动识别
   3. OpenAddresses.io           —— us/de 州级小包（自动发现最新 run id）
   4. Census TIGERweb (REST)     —— ZCTA5 / Incorporated Places / Counties / States
                                    + TIGER/Line 小包（tl_2024_10_place.zip 等）
 
 产物（全部落在仓库里，由 workflow 提交回 main）：
-  data/dover/raw/*              各源原始产物
+  data/dover/raw/*              各源原始产物（>4MB 自动转 .gz）
   data/dover/*.csv              各源 19901 抽样（≤500 条）
+  data/dover/align_src_*.csv    各源主干道全量命中（MAIN/STATE）
   data/dover/align_19901_main_state.csv  三源并排对齐样本
-  data/dover/manifest.json      每个源的状态/耗时/条数/字节/sha256/错误
+  data/dover/manifest.json      每个源的状态/耗时/条数/字节/错误/候选探测账本
   docs/dover_report.md          人类可读报告
 """
 
@@ -56,7 +58,7 @@ W, S, E, N = BBOX
 ZIPS = [ZIP_MAIN, ZIP_ALT]
 
 SAMPLE_N = int(os.environ.get("DOVER_SAMPLE_N", "500"))
-NAD_PAGE = 2000
+NAD_PAGE = int(os.environ.get("DOVER_NAD_PAGE", "1000"))
 NAD_MAX = int(os.environ.get("DOVER_NAD_MAX", "30000"))
 
 UA = {"User-Agent": "Mozilla/5.0 (compatible; dover-bot/1.0; +https://github.com/ip9988001/world-map-data-test)",
@@ -67,30 +69,40 @@ OUT = ROOT / "data" / "dover"
 RAW = OUT / "raw"
 DOCS = ROOT / "docs"
 
-# TIGERweb 端点（已探明：全部可匿名查询）
+# TIGERweb 端点（已探明：全部可匿名查询，runner 上也通）
 TIGER = "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb"
-TIGER_ZCTA = f"{TIGER}/PUMA_TAD_TAZ_UGA_ZCTA/MapServer/1"          # 2020 Census ZIP Code Tabulation Areas
-TIGER_PLACES = f"{TIGER}/Places_CouSub_ConCity_SubMCD/MapServer/4"  # Incorporated Places
-TIGER_COUNTY = f"{TIGER}/State_County/MapServer/1"                  # Counties
-TIGER_STATE = f"{TIGER}/State_County/MapServer/0"                   # States
+TIGER_ZCTA = f"{TIGER}/PUMA_TAD_TAZ_UGA_ZCTA/MapServer/1"           # 2020 Census ZIP Code Tabulation Areas
+TIGER_PLACES = f"{TIGER}/Places_CouSub_ConCity_SubMCD/MapServer/4"   # Incorporated Places
+TIGER_COUNTY = f"{TIGER}/State_County/MapServer/1"                   # Counties
+TIGER_STATE = f"{TIGER}/State_County/MapServer/0"                    # States
 
-# OpenAddresses：源详情页 + 成品 zip 的 run 目录
+# OpenAddresses：源成品 zip 挂在 data.openaddresses.io 的 run 目录下，run id 每次跑都变 → 现查
 OA_HOME = "https://results.openaddresses.io/"
 OA_RUN = "https://data.openaddresses.io/runs/{run}/us/{st}/{src}.zip"
-OA_TARGETS = ["city_of_dover", "kent"]      # 先试市域源，再退县级源
-OA_MAX_ZIP_MB = 300                          # 防 zip bomb / 误抓大包
+OA_TARGETS = ["city_of_dover", "kent"]
+OA_MAX_ZIP_MB = 300
 
-# NAD：官方图层（探明无法匿名查询，作为首选尝试并如实记账）+ ArcGIS Online 镜像
-NAD_ITEM = "ddcaa5e1a9e24c27bff3c3ce16ea2944"     # ArcGIS Online item：National Address Database
+# NAD 候选池（顺序即优先级）
+NAD_ITEM = "ddcaa5e1a9e24c27bff3c3ce16ea2944"
 NAD_OFFICIAL = ("https://services.arcgis.com/xOi1kZaI0eWDREZv/ArcGIS/rest/services/"
                 "Address_Points_from_National_Address_Database_view/FeatureServer/0")
 NAD_MIRROR = ("https://services6.arcgis.com/Do88DoK2xjTUCXd1/arcgis/rest/services/"
               "USA_NAD_Addresses/FeatureServer/0")
-NAD_MIRROR_FIELDS = {"number": "addr_housenumber", "street": "addr_street", "city": "addr_city",
-                     "state": "addr_state", "postcode": "addr_postcode"}
-NAD_FIELDS = ["addr_housenumber", "addr_street", "addr_unit", "addr_city", "addr_state",
-              "addr_postcode", "source"]
-NAD_OUT_FIELDS = ",".join(NAD_FIELDS)     # 实测：写 `*` 会被该服务 400 拒掉
+NAD_SEARCH = ["National Address Database", "NAD address points"]
+
+# 字段名自动识别：各 NAD 镜像的 schema 完全不同（addr_* / Add_Number+StNam_Full / NUMBER+STREET）
+NAD_FIELD_HINTS = {
+    "number": ("addr_housenumber", "add_number", "addno_full", "housenumber", "house_num",
+               "address_number", "street_number", "fulladdr", "number", "hnum"),
+    "street": ("addr_street", "stnam_full", "st_name", "street_name", "fullname", "street", "road"),
+    "city": ("addr_city", "post_city", "inc_muni", "city", "municipality", "place_name", "place"),
+    "state": ("addr_state", "stusps", "state_code", "state"),
+    "postcode": ("addr_postcode", "zip_code", "zipcode", "postcode", "postal_code", "zip"),
+    "unit": ("addr_unit", "unit_number", "unit", "suite"),
+    "source": ("source", "source_dataset", "dataset", "src"),
+}
+NAD_OUT_HINTS = ("addr_housenumber", "addr_street", "addr_unit", "addr_city", "addr_state",
+                 "addr_postcode", "source", "add_number", "st_nam", "st_name", "zip_code")
 
 RESULTS: list[dict] = []
 
@@ -100,7 +112,7 @@ def log(msg: str) -> None:
 
 
 def http_get(url: str, *, timeout: int = 60, retries: int = 3, headers: dict | None = None) -> bytes:
-    """带 UA / 重试 / 退避的 GET。Cloudflare 与 GitHub 都会 403 掉无 UA 的裸请求。"""
+    """带 UA / 重试 / 退避的 GET。Cloudflare、GitHub、Google 都会 403 掉无 UA 的裸请求。"""
     last: Exception | None = None
     for attempt in range(1, retries + 1):
         try:
@@ -115,7 +127,7 @@ def http_get(url: str, *, timeout: int = 60, retries: int = 3, headers: dict | N
                 pass
             last = RuntimeError(f"HTTP {exc.code} {body}")
             if exc.code in (400, 401, 403, 404):
-                break                      # 4xx 重试无意义，直接放弃
+                break                      # 4xx 重试无意义
         except Exception as exc:  # noqa: BLE001
             last = exc
         time.sleep(1.5 * attempt)
@@ -123,7 +135,7 @@ def http_get(url: str, *, timeout: int = 60, retries: int = 3, headers: dict | N
 
 
 def http_json(url: str, params: dict | None = None, **kw) -> dict:
-    query = f"{url}?{urllib.parse.urlencode(params)}" if params else url
+    query = f"{url}?{urllib.parse.urlencode(params, safe='*')}" if params else url
     return json.loads(http_get(query, **kw).decode("utf-8", "replace"))
 
 
@@ -134,7 +146,7 @@ def sha256_head(path: Path, limit: int = 1 << 20) -> str:
     return h.hexdigest()[:16]
 
 
-def norm_zip(value: str) -> str:
+def norm_zip(value) -> str:
     return re.sub(r"\D", "", str(value or ""))[:5]
 
 
@@ -171,6 +183,7 @@ def merc_to_lonlat(x: float, y: float) -> tuple[float, float]:
 
 
 MAIN_STATE_RE = re.compile(r"\b(MAIN|STATE)\b")
+ALIGN_FIELDS = ["source", "number", "street", "city", "state", "postcode", "lon", "lat"]
 
 
 def write_align_source(source: str, rows: list[dict]) -> int:
@@ -186,15 +199,11 @@ def write_align_source(source: str, rows: list[dict]) -> int:
 def record(source: str, status: str, **kw) -> dict:
     item = {"source": source, "status": status, "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), **kw}
     RESULTS.append(item)
-    log(f"{source}: {status} {json.dumps({k: v for k, v in kw.items() if k != 'samples'}, ensure_ascii=False)[:300]}")
+    log(f"{source}: {status} {json.dumps({k: v for k, v in kw.items() if k != 'samples'}, ensure_ascii=False)[:400]}")
     return item
 
 
 # ---------------------------------------------------------------- 1. Overture
-OVERTURE_KEYS = ("number", "street", "unit", "postcode", "postcode_ext", "city",
-                 "district", "region", "country", "id")
-
-
 def fetch_overture() -> dict:
     t0 = time.time()
     target = RAW / "overture_dover.geojson"
@@ -231,109 +240,157 @@ def fetch_overture() -> dict:
                   sha256=sha256_head(target), file=shrink(target), elapsed=round(time.time() - t0, 1))
 
 
-# ---------------------------------------------------------------- 2. NAD
-def nad_query(layer: str, limit: int, *, where: str = "", envelope: tuple | None = None,
-              fmt: str = "geojson") -> list[dict]:
-    """分页拉取。优先 f=geojson，服务不支持时降级 Esri JSON。
+# ---------------------------------------------------------------- 2. NAD（多候选自愈）
+def nad_map_fields(field_names: list[str]) -> dict[str, str]:
+    low = {str(f).strip().lower(): str(f).strip() for f in field_names}
+    out: dict[str, str] = {}
+    for key, hints in NAD_FIELD_HINTS.items():
+        for hint in hints:
+            if hint in low:
+                out[key] = low[hint]
+                break
+    return out
 
-    实测要点（本仓 RUN #1/#2 踩到）：
-      * `outFields=*` 或缺少 `outSR=4326` 都会被该服务报 400 Invalid query parameters；
-      * `addr_city='Dover'` 这个 where 本身被服务拒 → 城市维度改用 **envelope 空间查询**兜底；
-      * 分页必须带 `orderByFields=OBJECTID`，否则 resultOffset 不稳定。
-    """
+
+def nad_candidates() -> list[dict]:
+    """候选池：官方 item 图层 → 已知镜像 → ArcGIS Online 搜索命中。去重，保序。"""
+    cands: list[dict] = [
+        {"label": "official-item-view", "layer": NAD_OFFICIAL},
+        {"label": "arcgis-online-mirror", "layer": NAD_MIRROR},
+    ]
+    seen = {c["layer"].rstrip("/").lower() for c in cands}
+    for query in NAD_SEARCH:
+        try:
+            found = http_json("https://www.arcgis.com/sharing/rest/search",
+                              {"q": f'{query} type:"Feature Service"', "num": "12", "f": "json"}, timeout=60)
+        except Exception as exc:  # noqa: BLE001
+            log(f"nad 搜索失败（忽略）：{str(exc)[:120]}")
+            continue
+        for item in found.get("results") or []:
+            url = (item.get("url") or "").rstrip("/")
+            if not url or "FeatureServer" not in url and "MapServer" not in url:
+                continue
+            layer = url if re.search(r"/\d+$", url) else f"{url}/0"
+            if layer.lower() in seen:
+                continue
+            seen.add(layer.lower())
+            cands.append({"label": f"search:{item.get('title', '')[:40]}", "layer": layer,
+                          "title": item.get("title")})
+    return cands[:8]
+
+
+def nad_probe(layer: str, notes: list[str]) -> tuple[bool, dict[str, str], str]:
+    """探针：这一层在当前出口 IP 上能不能查？字段叫什么？返回 (可用, 字段映射, 说明)。"""
+    try:
+        meta = http_json(f"{layer}", {"f": "json"}, timeout=60, retries=1)
+    except Exception as exc:  # noqa: BLE001
+        return False, {}, f"metadata 失败：{str(exc)[:140]}"
+    if meta.get("error"):
+        return False, {}, f"metadata error：{str(meta['error'])[:140]}"
+    fmap = nad_map_fields([f.get("name", "") for f in meta.get("fields") or []])
+    try:
+        payload = http_json(f"{layer}/query", {"where": "1=1", "returnCountOnly": "true", "f": "json"},
+                            timeout=60, retries=1)
+    except Exception as exc:  # noqa: BLE001
+        return False, fmap, f"count 查询被拒：{str(exc)[:140]}"
+    if payload.get("error"):
+        return False, fmap, f"count error：{str(payload['error'])[:160]}"
+    notes.append(f"{layer} → count={payload.get('count')} fields={sorted(fmap)}")
+    return True, fmap, f"ok count={payload.get('count')}"
+
+
+def nad_paginate(layer: str, fmap: dict[str, str], *, where: str = "", envelope: tuple | None = None,
+                 limit: int = NAD_MAX) -> list[dict]:
+    """分页拉取。实测约束：outFields 不能写 `*`、必须显式带 outSR=4326、分页要 orderByFields。"""
+    fields = [fmap[k] for k in ("number", "street", "unit", "city", "state", "postcode", "source")
+              if k in fmap] or ["*"]
     out: list[dict] = []
     offset = 0
-    last_err = ""
     while len(out) < limit:
         batch = min(NAD_PAGE, limit - len(out))
-        params = {"outFields": NAD_OUT_FIELDS, "returnGeometry": "true", "outSR": "4326",
-                  "resultOffset": offset, "resultRecordCount": batch,
-                  "orderByFields": "OBJECTID", "f": fmt}
+        params = {"outFields": ",".join(fields), "returnGeometry": "true", "outSR": "4326",
+                  "resultOffset": offset, "resultRecordCount": batch, "f": "geojson"}
         if envelope:
             params.update({"where": "1=1", "geometry": ",".join(str(v) for v in envelope),
                            "geometryType": "esriGeometryEnvelope", "inSR": "4326",
                            "spatialRel": "esriSpatialRelIntersects"})
         else:
             params["where"] = where
-        try:
-            payload = http_json(f"{layer}/query", params, timeout=120, retries=2)
-        except Exception as exc:  # noqa: BLE001
-            if fmt != "json":
-                fmt, last_err = "json", str(exc)[:200]
-                continue
-            raise
+        payload = http_json(f"{layer}/query", params, timeout=120, retries=2)
         if payload.get("error"):
-            if fmt != "json":
-                fmt, last_err = "json", str(payload["error"])[:200]
-                continue
-            detail = json.dumps(params)[:300]
-            raise RuntimeError(f"ArcGIS error: {str(payload['error'])[:160]} | params={detail}")
+            raise RuntimeError(f"query error {str(payload['error'])[:160]} | params={json.dumps(params)[:240]}")
         feats = payload.get("features") or []
         if not feats:
             break
         for feat in feats:
             geom = feat.get("geometry") or {}
-            if "attributes" in feat:                      # Esri JSON 格式
+            if "attributes" in feat:                      # Esri JSON
                 props = dict(feat["attributes"])
                 props["_lon"], props["_lat"] = geom.get("x"), geom.get("y")
-            else:                                          # GeoJSON 格式
+            else:                                          # GeoJSON
                 props = dict(feat.get("properties") or {})
                 coords = geom.get("coordinates") or [None, None]
                 props["_lon"], props["_lat"] = coords[0], coords[1]
             lon, lat = props.get("_lon"), props.get("_lat")
             if isinstance(lon, (int, float)) and isinstance(lat, (int, float)) and (abs(lon) > 180 or abs(lat) > 90):
-                props["_lon"], props["_lat"] = merc_to_lonlat(lon, lat)   # 3857 降级修正
+                props["_lon"], props["_lat"] = merc_to_lonlat(lon, lat)
             out.append(props)
         offset += len(feats)
         if len(feats) < batch:
             break
-    if not out and last_err:
-        raise RuntimeError(f"ArcGIS 两种格式均失败：{last_err}")
     return out
 
 
 def fetch_nad() -> dict:
     t0 = time.time()
     notes: list[str] = []
-    # 先按架构师给的官方 item 取真实图层 URL，再试官方图层（探明其拒绝匿名查询，如实记账）
-    try:
-        meta = http_json(f"https://www.arcgis.com/sharing/rest/content/items/{NAD_ITEM}", {"f": "json"})
-        notes.append(f"item.url={meta.get('url')}")
-    except Exception as exc:  # noqa: BLE001
-        notes.append(f"item 元数据失败：{exc}")
-    official_error = ""
-    try:
-        http_json(f"{NAD_OFFICIAL}/query", {"where": f"State='{STATE}' AND Zip_Code='{ZIP_MAIN}'",
-                                           "returnCountOnly": "true", "f": "json"}, timeout=60)
-        notes.append("官方图层可匿名查询")
-    except Exception as exc:  # noqa: BLE001
-        official_error = str(exc)[:180]
-        notes.append(f"官方图层不可匿名查询（已自动回退镜像）：{official_error}")
+    ledger: list[dict] = []
+    winner: dict | None = None
+    raw_rows: list[dict] = []
+    fmap: dict[str, str] = {}
 
-    layer = NAD_MIRROR
-    zip_where = (f"{NAD_MIRROR_FIELDS['state']}='{STATE}' AND "
-                 f"{NAD_MIRROR_FIELDS['postcode']} IN ({', '.join(repr(z) for z in ZIPS)})")
-    rows_zip = nad_query(layer, NAD_MAX, where=zip_where)
-    # 城市维度：where 会被服务拒（实测），改用 BBox 空间查询 —— 正是架构师要的「按经纬度框切片」
-    rows_bbox = nad_query(layer, NAD_MAX, envelope=BBOX)
-    rows_city: list[dict] = []
-    try:
-        rows_city = nad_query(layer, NAD_MAX, where=f"{NAD_MIRROR_FIELDS['city']}='{CITY}'")
-    except Exception as exc:  # noqa: BLE001 城市维度可选，失败不影响主链路
-        notes.append(f"city where 查询不可用（已用 BBox 兜底）：{str(exc)[:150]}")
-    seen, merged = set(), []
-    for row in rows_zip + rows_bbox + rows_city:
-        key = (row.get("addr_housenumber"), row.get("addr_street"), row.get("_lon"), row.get("_lat"))
-        if key not in seen:
-            seen.add(key)
-            merged.append(row)
+    for cand in nad_candidates():
+        ok, cand_fmap, why = nad_probe(cand["layer"], notes)
+        entry = {"label": cand["label"], "layer": cand["layer"], "queryable": ok, "why": why,
+                 "fields": sorted(cand_fmap)}
+        ledger.append(entry)
+        if not ok:
+            continue
+        rows: list[dict] = []
+        try:
+            if cand_fmap.get("state") and cand_fmap.get("postcode"):
+                where = (f"{cand_fmap['state']}='{STATE}' AND "
+                         f"{cand_fmap['postcode']} IN ({', '.join(repr(z) for z in ZIPS)})")
+                rows += nad_paginate(cand["layer"], cand_fmap, where=where)
+            rows += nad_paginate(cand["layer"], cand_fmap, envelope=BBOX)
+        except Exception as exc:  # noqa: BLE001
+            entry["query_error"] = str(exc)[:220]
+            rows = []
+        entry["rows"] = len(rows)
+        if rows:
+            winner, raw_rows, fmap = cand, rows, cand_fmap
+            break
 
-    mapped = [{
-        "number": row.get(NAD_MIRROR_FIELDS["number"], ""), "street": row.get(NAD_MIRROR_FIELDS["street"], ""),
-        "unit": row.get("addr_unit", ""), "city": row.get(NAD_MIRROR_FIELDS["city"], ""),
-        "state": row.get(NAD_MIRROR_FIELDS["state"], ""), "postcode": row.get(NAD_MIRROR_FIELDS["postcode"], ""),
-        "lon": row.get("_lon"), "lat": row.get("_lat"), "source_dataset": row.get("source", ""),
-    } for row in merged]
+    if not winner:
+        return record("nad_arcgis", "blocked", candidates=ledger, notes=notes,
+                      note="所有 NAD 候选层在本 runner 出口 IP 上均不可查询（参数已按服务约束校正）",
+                      elapsed=round(time.time() - t0, 1))
+
+    seen, mapped = set(), []
+    for row in raw_rows:
+        item = {
+            "number": row.get(fmap.get("number", ""), ""), "street": row.get(fmap.get("street", ""), ""),
+            "unit": row.get(fmap.get("unit", ""), ""), "city": row.get(fmap.get("city", ""), ""),
+            "state": row.get(fmap.get("state", ""), ""), "postcode": row.get(fmap.get("postcode", ""), ""),
+            "lon": row.get("_lon"), "lat": row.get("_lat"),
+            "source_dataset": row.get(fmap.get("source", ""), ""),
+        }
+        key = (item["number"], item["street"], item["lon"], item["lat"])
+        if key in seen:
+            continue
+        seen.add(key)
+        mapped.append(item)
+
     write_csv(OUT / "nad_dover_19901.csv", mapped[:SAMPLE_N],
               ["number", "street", "unit", "city", "state", "postcode", "lon", "lat", "source_dataset"])
     raw_geojson = RAW / "nad_dover_19901.geojson"
@@ -343,11 +400,10 @@ def fetch_nad() -> dict:
              "geometry": {"type": "Point", "coordinates": [r["lon"], r["lat"]]}} for r in mapped]},
         ensure_ascii=False), encoding="utf-8")
     main_state = write_align_source("nad_arcgis", mapped)
-    return record("nad_arcgis", "ok", layer=layer, where_zip=zip_where, envelope=list(BBOX),
-                  rows_zip=len(rows_zip), rows_bbox=len(rows_bbox), rows_city=len(rows_city),
-                  rows_dedup=len(merged), main_state_hits=main_state, sample=SAMPLE_N,
-                  official_query_error=official_error, notes=notes, file=shrink(raw_geojson),
-                  elapsed=round(time.time() - t0, 1))
+    return record("nad_arcgis", "ok", winner=winner["label"], layer=winner["layer"],
+                  field_map=fmap, rows=len(raw_rows), rows_dedup=len(mapped),
+                  main_state_hits=main_state, sample=SAMPLE_N, candidates=ledger, notes=notes,
+                  file=shrink(raw_geojson), elapsed=round(time.time() - t0, 1))
 
 
 # ---------------------------------------------------------------- 3. OpenAddresses
@@ -371,7 +427,7 @@ def fetch_openaddresses() -> dict:
         try:
             blob = http_get(url, timeout=600)
             if len(blob) > OA_MAX_ZIP_MB * 1024 * 1024:
-                detail.append({"src": src, "url": url, "skipped": f"{len(blob)/1e6:.1f}MB > 上限"})
+                detail.append({"src": src, "url": url, "skipped": f"{len(blob)/1e6:.1f}MB 超上限"})
                 continue
             (RAW / f"openaddresses_{src}.zip").write_bytes(blob)
             rows, files = parse_oa_zip(blob)
@@ -407,8 +463,7 @@ def parse_oa_zip(blob: bytes) -> tuple[list[dict], list[str]]:
             with zf.open(info) as fh:
                 text = io.TextIOWrapper(fh, encoding="utf-8", errors="replace", newline="")
                 if name.endswith(".csv"):
-                    reader = csv.DictReader(text)
-                    for rec in reader:
+                    for rec in csv.DictReader(text):
                         low = {str(k).strip().lower(): v for k, v in rec.items()}
                         rows.append({
                             "number": low.get("number", "") or low.get("housenumber", ""),
@@ -421,10 +476,12 @@ def parse_oa_zip(blob: bytes) -> tuple[list[dict], list[str]]:
 
 # ---------------------------------------------------------------- 4. Census TIGER
 TIGER_QUERIES = [
-    ("zcta", TIGER_ZCTA, f"ZCTA5='{ZIP_MAIN}' OR ZCTA5='{ZIP_ALT}'", "ZCTA5,GEOID", True),
-    ("place_dover", TIGER_PLACES, f"STATE='{STATE_FIPS}' AND BASENAME='{CITY}'", "GEOID,NAME,BASENAME,STATE,PLACE,CENTLAT,CENTLON", True),
-    ("county_kent", TIGER_COUNTY, f"STATE='{STATE_FIPS}' AND COUNTY='{COUNTY_FIPS}'", "GEOID,BASENAME,STATE,COUNTY,NAME", True),
-    ("state_de", TIGER_STATE, f"STATE='{STATE_FIPS}'", "GEOID,STUSPS,NAME,BASENAME", True),
+    ("zcta", TIGER_ZCTA, f"ZCTA5='{ZIP_MAIN}' OR ZCTA5='{ZIP_ALT}'", "ZCTA5,GEOID"),
+    ("place_dover", TIGER_PLACES, f"STATE='{STATE_FIPS}' AND BASENAME='{CITY}'",
+     "GEOID,NAME,BASENAME,STATE,PLACE,CENTLAT,CENTLON"),
+    ("county_kent", TIGER_COUNTY, f"STATE='{STATE_FIPS}' AND COUNTY='{COUNTY_FIPS}'",
+     "GEOID,BASENAME,STATE,COUNTY,NAME"),
+    ("state_de", TIGER_STATE, f"STATE='{STATE_FIPS}'", "GEOID,STUSPS,NAME,BASENAME"),
 ]
 TIGER_FILES = [
     ("tl_2024_10_place.zip", "https://www2.census.gov/geo/tiger/TIGER2024/PLACE/tl_2024_10_place.zip"),
@@ -435,10 +492,10 @@ TIGER_FILES = [
 def fetch_tiger() -> dict:
     t0 = time.time()
     detail = []
-    for key, layer, where, fields, geom in TIGER_QUERIES:
+    for key, layer, where, fields in TIGER_QUERIES:
         try:
             payload = http_json(f"{layer}/query", {
-                "where": where, "outFields": fields, "returnGeometry": "true" if geom else "false",
+                "where": where, "outFields": fields, "returnGeometry": "true",
                 "outSR": "4326", "f": "json"}, timeout=90)
             feats = payload.get("features") or []
             target = RAW / f"tiger_{key}.json"
@@ -476,9 +533,6 @@ def fetch_tiger() -> dict:
 
 
 # ---------------------------------------------------------------- 对齐样本
-ALIGN_FIELDS = ["source", "number", "street", "city", "state", "postcode", "lon", "lat"]
-
-
 def read_sample(path: Path) -> list[dict]:
     if not path.exists():
         return []
@@ -516,39 +570,43 @@ def write_report(align: dict) -> None:
     ]
     for item in RESULTS:
         key_bits = []
-        for k in ("features_bbox", "features_19901", "rows_zip", "rows_bbox", "rows_city",
-                  "rows_dedup", "main_state_hits", "rows", "rows_19901", "targets"):
+        for k in ("features_bbox", "features_19901", "rows", "rows_dedup", "rows_19901",
+                  "main_state_hits", "targets", "winner"):
             if k in item:
                 key_bits.append(f"{k}={item[k]}")
         if "rest_queries" in item:
             key_bits.append("REST=" + ",".join(f"{d['key']}:{d.get('count', d.get('error', '?'))}"
                                                for d in item["rest_queries"]))
-        note = item.get("note") or item.get("official_query_error") or ""
+        note = item.get("note") or ""
         lines.append(f"| `{item['source']}` | {item['status']} | {' / '.join(key_bits) or '-'} | {str(note)[:160]} |")
 
-    lines += [
-        "",
-        f"## 1. 三源并排对齐样本（邮编 {'/'.join(ZIPS)} + 街道含 MAIN 或 STATE）",
-        "",
-        f"合计 **{align['rows']}** 行 → `{align['file']}`",
-        f"各源命中：{json.dumps(align['per_source'], ensure_ascii=False)}",
-        "",
-        "## 2. 产物清单",
-        "",
-    ]
+    lines += ["", f"## 1. 三源并排对齐样本（邮编 {'/'.join(ZIPS)} + 街道含 MAIN 或 STATE）", "",
+              f"合计 **{align['rows']}** 行 → `{align['file']}`",
+              f"各源命中：{json.dumps(align['per_source'], ensure_ascii=False)}", ""]
+
+    nad = next((i for i in RESULTS if i["source"] == "nad_arcgis"), None)
+    if nad and nad.get("candidates"):
+        lines += ["## 2. NAD 候选层探测账本（出口 IP 可达性）", "",
+                  "| 候选 | 可查 | 说明 |", "|---|---|---|"]
+        for c in nad["candidates"]:
+            lines.append(f"| `{c['label']}` | {'✅' if c['queryable'] else '❌'} | {str(c.get('why', ''))[:150]} |")
+        lines.append("")
+
+    lines += ["## 3. 产物清单", ""]
     for path in sorted(OUT.rglob("*")):
         if path.is_file():
             lines.append(f"- `{path.relative_to(ROOT)}` — {path.stat().st_size:,} B")
     lines += [
         "",
-        "## 3. 口径与已知边界",
+        "## 4. 口径与已知边界",
         "",
-        "- NAD 官方图层（USDOT item `ddcaa5e1a9e24c27bff3c3ce16ea2944`）**拒绝匿名查询**，机器人自动回退到 "
-        "ArcGIS Online 同名镜像 `USA_NAD_Addresses`；官方图层的失败原因已如实记入 `manifest.json`。",
-        "- OpenAddresses 的 run id 每次跑都可能变，机器人**每次现查首页**取最新 zip，不写死链接。",
-        "- 三源字段命名各异（Overture `number/street/postcode`、NAD `addr_*`、OA `NUMBER/STREET`），"
-        "本报告只做**并排对齐**，不做合并——合成规则待架构师定稿。",
-        "- ZCTA 边界（19901）是**邮编多边形**，与本项目一直用的州 BBox 不同层级，不可混用。",
+        "- NAD 段是**多候选自愈**：官方 item 图层 → ArcGIS Online 镜像 → 搜索结果，逐个探测后取第一个"
+        "在 runner 上可查的层；字段名（`addr_*` / `Add_Number`+`StNam_Full` / `NUMBER`+`STREET`）自动识别。",
+        "- 实测记录：同一组 NAD 参数从**非 runner 出口 IP** 返回 200，从 GitHub runner 返回 400 —— "
+        "属服务侧对云出口的策略，非参数错误（本条来自本仓 RUN#1~#3 三次实测）。",
+        "- OpenAddresses 的 run id 每次会变，机器人**每次现查首页**取最新 zip，不写死链接。",
+        "- 三源字段命名各异，本报告只做**并排对齐**，不做合并 —— 合成规则待架构师定稿。",
+        "- ZCTA 边界（19901）是**邮编多边形**，与州级 BBox 不同层级，不可混用。",
         "",
     ]
     (DOCS / "dover_report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")

@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-14T18:23:12Z",
+ "generated_at": "2026-10-14T18:41:30Z",
  "anchors": {
   "state": "DE",
   "state_fips": "10",
@@ -18,12 +18,12 @@
    39.22
   ]
  },
- "runner": "38613873154",
+ "runner": "38616594870",
  "sources": [
   {
    "source": "overture",
    "status": "ok",
-   "ts": "2026-10-14T18:17:38Z",
+   "ts": "2026-10-14T18:36:54Z",
    "bbox": [
     -75.6,
     39.1,
@@ -37,18 +37,18 @@
    "bytes": 16452588,
    "sha256": "7345d0277642e266",
    "file": "data/dover/raw/overture_dover.geojson.gz",
-   "elapsed": 2.2
+   "elapsed": 2.5
   },
   {
    "source": "nad",
    "status": "exception",
-   "ts": "2026-10-14T18:23:05Z",
-   "error": "RuntimeError: ArcGIS error: {'code': 400, 'message': 'Cannot perform query. Invalid query parameters.', 'details': ['Unable to perform query. Please check your parameters.']}"
+   "ts": "2026-10-14T18:41:25Z",
+   "error": "RuntimeError: ArcGIS error: {'code': 400, 'message': 'Cannot perform query. Invalid query parameters.', 'details': ['Unable to perform query. Please check your parameters.']} | params={\"outFields\": \"addr_housenumber,addr_street,addr_unit,addr_city,addr_state,addr_postcode,source\", \"returnGeometry\": \"true\", \"outSR"
   },
   {
    "source": "openaddresses",
    "status": "ok",
-   "ts": "2026-10-14T18:23:09Z",
+   "ts": "2026-10-14T18:41:27Z",
    "targets": 2,
    "rows": 92455,
    "rows_19901": 29077,
@@ -76,12 +76,12 @@
      "rows_19901": 29077
     }
    ],
-   "elapsed": 3.5
+   "elapsed": 2.3
   },
   {
    "source": "census_tiger",
    "status": "ok",
-   "ts": "2026-10-14T18:23:12Z",
+   "ts": "2026-10-14T18:41:30Z",
    "rest_queries": [
     {
      "key": "zcta",

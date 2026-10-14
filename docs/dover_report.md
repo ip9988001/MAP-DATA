@@ -1,15 +1,15 @@
 # Dover, DE 四源取样报告（自动生成）
 
-> 生成时间：2026-10-14 18:23:12Z ｜ 运行位置：**GitHub Actions**（本机服务器零下载）
+> 生成时间：2026-10-14 18:41:30Z ｜ 运行位置：**GitHub Actions**（本机服务器零下载）
 > 锚定参数：州 `DE`/FIPS `10`｜县 `Kent County`/FIPS `10001`｜市 `Dover`/Place FIPS `1021200`｜邮编 `19901`, `19904`｜BBox `[-75.6, 39.1, -75.45, 39.22]`
 
 ## 0. 四源状态
 
 | 源 | 状态 | 关键数字 | 备注 |
 |---|---|---|---|
-| `overture` | ok | features_bbox=28027 / features_19901=24046 |  |
+| `overture` | ok | features_bbox=28027 / features_19901=24046 / main_state_hits=510 |  |
 | `nad` | exception | - |  |
-| `openaddresses` | ok | rows=92455 / rows_19901=29077 / targets=2 |  |
+| `openaddresses` | ok | main_state_hits=414 / rows=92455 / rows_19901=29077 / targets=2 |  |
 | `census_tiger` | ok | REST=zcta:2,place_dover:1,county_kent:1,state_de:0 |  |
 
 ## 1. 三源并排对齐样本（邮编 19901/19904 + 街道含 MAIN 或 STATE）
@@ -22,7 +22,7 @@
 - `data/dover/align_19901_main_state.csv` — 66,444 B
 - `data/dover/align_src_openaddresses.csv` — 21,390 B
 - `data/dover/align_src_overture.csv` — 34,794 B
-- `data/dover/manifest.json` — 3,887 B
+- `data/dover/manifest.json` — 4,036 B
 - `data/dover/openaddresses_19901.csv` — 27,236 B
 - `data/dover/overture_19901.csv` — 33,707 B
 - `data/dover/raw/openaddresses_city_of_dover.zip` — 310,206 B

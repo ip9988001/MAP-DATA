@@ -88,6 +88,9 @@ NAD_MIRROR = ("https://services6.arcgis.com/Do88DoK2xjTUCXd1/arcgis/rest/service
               "USA_NAD_Addresses/FeatureServer/0")
 NAD_MIRROR_FIELDS = {"number": "addr_housenumber", "street": "addr_street", "city": "addr_city",
                      "state": "addr_state", "postcode": "addr_postcode"}
+NAD_FIELDS = ["addr_housenumber", "addr_street", "addr_unit", "addr_city", "addr_state",
+              "addr_postcode", "source"]
+NAD_OUT_FIELDS = ",".join(NAD_FIELDS)     # 实测：写 `*` 会被该服务 400 拒掉
 
 RESULTS: list[dict] = []
 
@@ -229,15 +232,29 @@ def fetch_overture() -> dict:
 
 
 # ---------------------------------------------------------------- 2. NAD
-def nad_query(layer: str, where: str, limit: int, fmt: str = "geojson") -> list[dict]:
-    """分页拉取。优先 f=geojson，服务不支持/参数被拒时自动降级成 Esri JSON。"""
+def nad_query(layer: str, limit: int, *, where: str = "", envelope: tuple | None = None,
+              fmt: str = "geojson") -> list[dict]:
+    """分页拉取。优先 f=geojson，服务不支持时降级 Esri JSON。
+
+    实测要点（本仓 RUN #1/#2 踩到）：
+      * `outFields=*` 或缺少 `outSR=4326` 都会被该服务报 400 Invalid query parameters；
+      * `addr_city='Dover'` 这个 where 本身被服务拒 → 城市维度改用 **envelope 空间查询**兜底；
+      * 分页必须带 `orderByFields=OBJECTID`，否则 resultOffset 不稳定。
+    """
     out: list[dict] = []
     offset = 0
     last_err = ""
     while len(out) < limit:
         batch = min(NAD_PAGE, limit - len(out))
-        params = {"where": where, "outFields": "*", "returnGeometry": "true",
-                  "outSR": "4326", "resultOffset": offset, "resultRecordCount": batch, "f": fmt}
+        params = {"outFields": NAD_OUT_FIELDS, "returnGeometry": "true", "outSR": "4326",
+                  "resultOffset": offset, "resultRecordCount": batch,
+                  "orderByFields": "OBJECTID", "f": fmt}
+        if envelope:
+            params.update({"where": "1=1", "geometry": ",".join(str(v) for v in envelope),
+                           "geometryType": "esriGeometryEnvelope", "inSR": "4326",
+                           "spatialRel": "esriSpatialRelIntersects"})
+        else:
+            params["where"] = where
         try:
             payload = http_json(f"{layer}/query", params, timeout=120, retries=2)
         except Exception as exc:  # noqa: BLE001
@@ -249,7 +266,8 @@ def nad_query(layer: str, where: str, limit: int, fmt: str = "geojson") -> list[
             if fmt != "json":
                 fmt, last_err = "json", str(payload["error"])[:200]
                 continue
-            raise RuntimeError(f"ArcGIS error: {str(payload['error'])[:200]}")
+            detail = json.dumps(params)[:300]
+            raise RuntimeError(f"ArcGIS error: {str(payload['error'])[:160]} | params={detail}")
         feats = payload.get("features") or []
         if not feats:
             break
@@ -293,10 +311,18 @@ def fetch_nad() -> dict:
         notes.append(f"官方图层不可匿名查询（已自动回退镜像）：{official_error}")
 
     layer = NAD_MIRROR
-    rows_zip = nad_query(layer, f"{NAD_MIRROR_FIELDS['state']}='{STATE}' AND {NAD_MIRROR_FIELDS['postcode']}='{ZIP_MAIN}'", NAD_MAX)
-    rows_city = nad_query(layer, f"{NAD_MIRROR_FIELDS['state']}='{STATE}' AND {NAD_MIRROR_FIELDS['city']}='{CITY}'", NAD_MAX)
+    zip_where = (f"{NAD_MIRROR_FIELDS['state']}='{STATE}' AND "
+                 f"{NAD_MIRROR_FIELDS['postcode']} IN ({', '.join(repr(z) for z in ZIPS)})")
+    rows_zip = nad_query(layer, NAD_MAX, where=zip_where)
+    # 城市维度：where 会被服务拒（实测），改用 BBox 空间查询 —— 正是架构师要的「按经纬度框切片」
+    rows_bbox = nad_query(layer, NAD_MAX, envelope=BBOX)
+    rows_city: list[dict] = []
+    try:
+        rows_city = nad_query(layer, NAD_MAX, where=f"{NAD_MIRROR_FIELDS['city']}='{CITY}'")
+    except Exception as exc:  # noqa: BLE001 城市维度可选，失败不影响主链路
+        notes.append(f"city where 查询不可用（已用 BBox 兜底）：{str(exc)[:150]}")
     seen, merged = set(), []
-    for row in rows_zip + rows_city:
+    for row in rows_zip + rows_bbox + rows_city:
         key = (row.get("addr_housenumber"), row.get("addr_street"), row.get("_lon"), row.get("_lat"))
         if key not in seen:
             seen.add(key)
@@ -317,8 +343,8 @@ def fetch_nad() -> dict:
              "geometry": {"type": "Point", "coordinates": [r["lon"], r["lat"]]}} for r in mapped]},
         ensure_ascii=False), encoding="utf-8")
     main_state = write_align_source("nad_arcgis", mapped)
-    return record("nad_arcgis", "ok", layer=layer, where_zip=f"{STATE}+{ZIP_MAIN}",
-                  where_city=f"{STATE}+{CITY}", rows_zip=len(rows_zip), rows_city=len(rows_city),
+    return record("nad_arcgis", "ok", layer=layer, where_zip=zip_where, envelope=list(BBOX),
+                  rows_zip=len(rows_zip), rows_bbox=len(rows_bbox), rows_city=len(rows_city),
                   rows_dedup=len(merged), main_state_hits=main_state, sample=SAMPLE_N,
                   official_query_error=official_error, notes=notes, file=shrink(raw_geojson),
                   elapsed=round(time.time() - t0, 1))
@@ -490,8 +516,8 @@ def write_report(align: dict) -> None:
     ]
     for item in RESULTS:
         key_bits = []
-        for k in ("features_bbox", "features_19901", "rows_zip", "rows_city", "rows_dedup",
-                  "rows", "rows_19901", "targets"):
+        for k in ("features_bbox", "features_19901", "rows_zip", "rows_bbox", "rows_city",
+                  "rows_dedup", "main_state_hits", "rows", "rows_19901", "targets"):
             if k in item:
                 key_bits.append(f"{k}={item[k]}")
         if "rest_queries" in item:

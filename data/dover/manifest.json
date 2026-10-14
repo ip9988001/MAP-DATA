@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-14T18:41:30Z",
+ "generated_at": "2026-10-14T18:50:40Z",
  "anchors": {
   "state": "DE",
   "state_fips": "10",
@@ -18,12 +18,12 @@
    39.22
   ]
  },
- "runner": "38616594870",
+ "runner": "38617600305",
  "sources": [
   {
    "source": "overture",
    "status": "ok",
-   "ts": "2026-10-14T18:36:54Z",
+   "ts": "2026-10-14T18:44:08Z",
    "bbox": [
     -75.6,
     39.1,
@@ -37,18 +37,72 @@
    "bytes": 16452588,
    "sha256": "7345d0277642e266",
    "file": "data/dover/raw/overture_dover.geojson.gz",
-   "elapsed": 2.5
+   "elapsed": 2.6
   },
   {
-   "source": "nad",
-   "status": "exception",
-   "ts": "2026-10-14T18:41:25Z",
-   "error": "RuntimeError: ArcGIS error: {'code': 400, 'message': 'Cannot perform query. Invalid query parameters.', 'details': ['Unable to perform query. Please check your parameters.']} | params={\"outFields\": \"addr_housenumber,addr_street,addr_unit,addr_city,addr_state,addr_postcode,source\", \"returnGeometry\": \"true\", \"outSR"
+   "source": "nad_arcgis",
+   "status": "ok",
+   "ts": "2026-10-14T18:50:33Z",
+   "winner": "arcgis-online-mirror",
+   "layer": "https://services6.arcgis.com/Do88DoK2xjTUCXd1/arcgis/rest/services/USA_NAD_Addresses/FeatureServer/0",
+   "field_map": {
+    "number": "addr_housenumber",
+    "street": "addr_street",
+    "city": "addr_city",
+    "state": "addr_state",
+    "postcode": "addr_postcode",
+    "unit": "addr_unit",
+    "source": "source"
+   },
+   "rows": 56596,
+   "rows_dedup": 33082,
+   "main_state_hits": 407,
+   "sample": 500,
+   "candidates": [
+    {
+     "label": "official-item-view",
+     "layer": "https://services.arcgis.com/xOi1kZaI0eWDREZv/ArcGIS/rest/services/Address_Points_from_National_Address_Database_view/FeatureServer/0",
+     "queryable": true,
+     "why": "ok count=97928946",
+     "fields": [
+      "city",
+      "number",
+      "postcode",
+      "state",
+      "street",
+      "unit"
+     ],
+     "query_error": "query error {'code': 400, 'message': '', 'details': ['Unable to perform query. Please check your parameters.']} | params={\"outFields\": \"Add_Number,StNam_Full,Unit,Post_City,State,Zip_Code\", \"returnGeometry\": \"true\", \"out",
+     "rows": 0
+    },
+    {
+     "label": "arcgis-online-mirror",
+     "layer": "https://services6.arcgis.com/Do88DoK2xjTUCXd1/arcgis/rest/services/USA_NAD_Addresses/FeatureServer/0",
+     "queryable": true,
+     "why": "ok count=75937418",
+     "fields": [
+      "city",
+      "number",
+      "postcode",
+      "source",
+      "state",
+      "street",
+      "unit"
+     ],
+     "rows": 56596
+    }
+   ],
+   "notes": [
+    "https://services.arcgis.com/xOi1kZaI0eWDREZv/ArcGIS/rest/services/Address_Points_from_National_Address_Database_view/FeatureServer/0 → count=97928946 fields=['city', 'number', 'postcode', 'state', 'street', 'unit']",
+    "https://services6.arcgis.com/Do88DoK2xjTUCXd1/arcgis/rest/services/USA_NAD_Addresses/FeatureServer/0 → count=75937418 fields=['city', 'number', 'postcode', 'source', 'state', 'street', 'unit']"
+   ],
+   "file": "data/dover/raw/nad_dover_19901.geojson.gz",
+   "elapsed": 385.0
   },
   {
    "source": "openaddresses",
    "status": "ok",
-   "ts": "2026-10-14T18:41:27Z",
+   "ts": "2026-10-14T18:50:36Z",
    "targets": 2,
    "rows": 92455,
    "rows_19901": 29077,
@@ -76,12 +130,12 @@
      "rows_19901": 29077
     }
    ],
-   "elapsed": 2.3
+   "elapsed": 3.2
   },
   {
    "source": "census_tiger",
    "status": "ok",
-   "ts": "2026-10-14T18:41:30Z",
+   "ts": "2026-10-14T18:50:40Z",
    "rest_queries": [
     {
      "key": "zcta",
@@ -154,14 +208,14 @@
      ]
     }
    ],
-   "elapsed": 3.4
+   "elapsed": 3.5
   }
  ],
  "alignment": {
-  "rows": 914,
+  "rows": 1321,
   "per_source": {
    "overture": 500,
-   "nad_arcgis": 0,
+   "nad_arcgis": 407,
    "openaddresses": 414
   },
   "file": "data/dover/align_19901_main_state.csv"

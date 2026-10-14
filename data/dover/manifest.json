@@ -1,0 +1,167 @@
+{
+ "generated_at": "2026-10-14T18:16:22Z",
+ "anchors": {
+  "state": "DE",
+  "state_fips": "10",
+  "county": "Kent County",
+  "county_fips": "10001",
+  "city": "Dover",
+  "place_fips": "1021200",
+  "zips": [
+   "19901",
+   "19904"
+  ],
+  "bbox": [
+   -75.6,
+   39.1,
+   -75.45,
+   39.22
+  ]
+ },
+ "runner": "38612994894",
+ "sources": [
+  {
+   "source": "overture",
+   "status": "ok",
+   "ts": "2026-10-14T18:11:28Z",
+   "bbox": [
+    -75.6,
+    39.1,
+    -75.45,
+    39.22
+   ],
+   "features_bbox": 28027,
+   "features_19901": 24046,
+   "sample": 500,
+   "bytes": 16452588,
+   "sha256": "7345d0277642e266",
+   "file": "data/dover/raw/overture_dover.geojson",
+   "elapsed": 2.5
+  },
+  {
+   "source": "nad",
+   "status": "exception",
+   "ts": "2026-10-14T18:16:17Z",
+   "error": "RuntimeError: ArcGIS error: {'code': 400, 'message': '', 'details': ['Unable to perform query. Please check your parameters.']}"
+  },
+  {
+   "source": "openaddresses",
+   "status": "ok",
+   "ts": "2026-10-14T18:16:19Z",
+   "targets": 2,
+   "rows": 92455,
+   "rows_19901": 29077,
+   "sample": 500,
+   "detail": [
+    {
+     "src": "city_of_dover",
+     "url": "https://data.openaddresses.io/runs/1191307/us/de/city_of_dover.zip",
+     "bytes": 310206,
+     "csv_members": [
+      "us/de/city_of_dover.csv"
+     ],
+     "rows": 12732,
+     "rows_19901": 0
+    },
+    {
+     "src": "kent",
+     "url": "https://data.openaddresses.io/runs/1195369/us/de/kent.zip",
+     "bytes": 1908081,
+     "csv_members": [
+      "us/de/kent.csv"
+     ],
+     "rows": 79723,
+     "rows_19901": 29077
+    }
+   ],
+   "elapsed": 2.4
+  },
+  {
+   "source": "census_tiger",
+   "status": "ok",
+   "ts": "2026-10-14T18:16:22Z",
+   "rest_queries": [
+    {
+     "key": "zcta",
+     "layer": "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/PUMA_TAD_TAZ_UGA_ZCTA/MapServer/1",
+     "where": "ZCTA5='19901' OR ZCTA5='19904'",
+     "count": 2,
+     "file": "data/dover/raw/tiger_zcta.json"
+    },
+    {
+     "key": "place_dover",
+     "layer": "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Places_CouSub_ConCity_SubMCD/MapServer/4",
+     "where": "STATE='10' AND BASENAME='Dover'",
+     "count": 1,
+     "file": "data/dover/raw/tiger_place_dover.json"
+    },
+    {
+     "key": "county_kent",
+     "layer": "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/State_County/MapServer/1",
+     "where": "STATE='10' AND COUNTY='001'",
+     "count": 1,
+     "file": "data/dover/raw/tiger_county_kent.json"
+    },
+    {
+     "key": "state_de",
+     "layer": "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/State_County/MapServer/0",
+     "where": "STATE='10'",
+     "count": 0,
+     "file": "data/dover/raw/tiger_state_de.json"
+    }
+   ],
+   "tiger_line_files": [
+    {
+     "file": "tl_2024_10_place.zip",
+     "bytes": 444861,
+     "url": "https://www2.census.gov/geo/tiger/TIGER2024/PLACE/tl_2024_10_place.zip",
+     "dbf_records": 79,
+     "dbf_fields": [
+      "STATEFP",
+      "PLACEFP",
+      "PLACENS",
+      "GEOID",
+      "GEOIDFQ",
+      "NAME",
+      "NAMELSAD",
+      "LSAD",
+      "CLASSFP",
+      "PCICBSA",
+      "MTFCC",
+      "FUNCSTAT"
+     ]
+    },
+    {
+     "file": "tl_2024_10001_addrfeat.zip",
+     "bytes": 1409495,
+     "url": "https://www2.census.gov/geo/tiger/TIGER2024/ADDRFEAT/tl_2024_10001_addrfeat.zip",
+     "dbf_records": 11072,
+     "dbf_fields": [
+      "TLID",
+      "TFIDL",
+      "TFIDR",
+      "ARIDL",
+      "ARIDR",
+      "LINEARID",
+      "FULLNAME",
+      "LFROMHN",
+      "LTOHN",
+      "RFROMHN",
+      "RTOHN",
+      "ZIPL"
+     ]
+    }
+   ],
+   "elapsed": 2.9
+  }
+ ],
+ "alignment": {
+  "rows": 11,
+  "per_source": {
+   "overture": 0,
+   "nad_arcgis": 0,
+   "openaddresses": 11
+  },
+  "file": "data/dover/align_19901_main_state.csv"
+ }
+}

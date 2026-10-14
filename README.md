@@ -13,7 +13,7 @@ World Address Data Factory 的**公开测试仓库** —— 与生产仓库 `MAP
 | 源 | 取数方式 | 现状 |
 |---|---|---|
 | Overture Maps (addresses) | `overturemaps download --bbox=...` 云端按框切 | 见 `data/dover/manifest.json` |
-| USDOT NAD (ArcGIS REST) | `FeatureServer/0/query` + `resultOffset` 分页；官方图层拒绝匿名查询时自动回退镜像 | 同上 |
+| USDOT NAD (ArcGIS REST) | **只用交通部官方正牌三通道**：A 官方 GeoServices REST（动态解析全部字段 + envelope 分页）→ B 官方 OGC WFS 备份 → C Socrata Release 24 样本附件。🚫 第三方阉割镜像 `Do88DoK2xjTUCXd1 / USA_NAD_Addresses` 已在代码层拉黑（仅 9 个 OSM 简化字段、2023 停更） | 同上 |
 | OpenAddresses.io | `us/de` 州/县级成品小包（每次现查最新 run id） | 同上 |
 | Census TIGERweb | ZCTA5 / Incorporated Places / Counties / States + TIGER/Line 小包 | 同上 |
 
@@ -30,6 +30,7 @@ World Address Data Factory 的**公开测试仓库** —— 与生产仓库 `MAP
 ### 产物
 
 - `data/dover/raw/` — 各源原始产物（Overture geojson / NAD geojson / OA zip / TIGER json+zip）
+- `data/dover/nad_dover_full.csv` — NAD **全字段**原始落库（约 39 列，非阉割子集）
 - `data/dover/*.csv` — 各源 19901 抽样（≤500 条）
 - `data/dover/align_19901_main_state.csv` — **三源并排对齐样本**（邮编 19901 且街道含 `MAIN` 或 `STATE`，排序后取前 300–500 条）
 - `data/dover/manifest.json` — 每个源的状态 / 耗时 / 条数 / 字节 / 错误

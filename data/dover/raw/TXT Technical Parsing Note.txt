@@ -1,0 +1,4 @@
+Technical Note: Record Ordering and Object IDs
+Please Note: The records in this flat text file are structured in their optimized physical database order, rather than numerical sequence by OID_ (Object ID). Because the National Address Database leverages highly efficient spatial indexing and bit-packing compression algorithms before export, geographically clustered records (such as specific states or counties) are grouped together on disk.
+
+All OID_ values remain perfectly unique across the entire dataset, but they will appear out of chronological order when reading the file sequentially. If your integration workflow requires a strict numerical sequence, you can safely sort the dataset by the OID_ column upon ingestion.

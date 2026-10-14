@@ -25,9 +25,11 @@
 from __future__ import annotations
 
 import csv
+import gzip
 import hashlib
 import io
 import json
+import math
 import os
 import re
 import shutil
@@ -146,6 +148,38 @@ def write_csv(path: Path, rows: list[dict], fields: list[str]) -> None:
             writer.writerow(row)
 
 
+def shrink(path: Path, threshold_mb: float = 4.0) -> str:
+    """大产物转 gz 再入库 —— 每天跑一轮，不能让 git 历史被几十 MB 的明文 geojson 吹爆。"""
+    if path.exists() and path.stat().st_size > threshold_mb * 1024 * 1024:
+        gz = path.with_suffix(path.suffix + ".gz")
+        with path.open("rb") as src, gzip.open(gz, "wb", compresslevel=6) as dst:
+            shutil.copyfileobj(src, dst)
+        path.unlink()
+        return str(gz.relative_to(ROOT))
+    return str(path.relative_to(ROOT))
+
+
+def merc_to_lonlat(x: float, y: float) -> tuple[float, float]:
+    """Web Mercator(3857) → WGS84。ArcGIS 降级成 Esri JSON 时可能回 3857 坐标。"""
+    lon = x / 20037508.34 * 180.0
+    lat = y / 20037508.34 * 180.0
+    lat = 180.0 / math.pi * (2 * math.atan(math.exp(lat * math.pi / 180.0)) - math.pi / 2)
+    return round(lon, 7), round(lat, 7)
+
+
+MAIN_STATE_RE = re.compile(r"\b(MAIN|STATE)\b")
+
+
+def write_align_source(source: str, rows: list[dict]) -> int:
+    """在**全量**结果上（不是 500 条样本上）筛出 MAIN/STATE 主干道，供三源并排对齐。"""
+    hit = [r for r in rows
+           if norm_zip(r.get("postcode")) in ZIPS
+           and MAIN_STATE_RE.search(str(r.get("street", "")).upper())]
+    hit.sort(key=lambda r: (str(r.get("street", "")), str(r.get("number", ""))))
+    write_csv(OUT / f"align_src_{source}.csv", hit[:SAMPLE_N], ALIGN_FIELDS[1:])
+    return len(hit)
+
+
 def record(source: str, status: str, **kw) -> dict:
     item = {"source": source, "status": status, "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), **kw}
     RESULTS.append(item)
@@ -188,28 +222,33 @@ def fetch_overture() -> dict:
     rows_19901 = [r for r in rows if norm_zip(r["postcode"]) in ZIPS]
     write_csv(OUT / "overture_19901.csv", rows_19901[:SAMPLE_N],
               ["number", "street", "unit", "city", "state", "postcode", "lon", "lat"])
+    main_state = write_align_source("overture", rows)
     return record("overture", "ok", bbox=list(BBOX), features_bbox=len(rows), features_19901=len(rows_19901),
-                  sample=SAMPLE_N, bytes=target.stat().st_size, sha256=sha256_head(target),
-                  file=str(target.relative_to(ROOT)), elapsed=round(time.time() - t0, 1))
+                  main_state_hits=main_state, sample=SAMPLE_N, bytes=target.stat().st_size,
+                  sha256=sha256_head(target), file=shrink(target), elapsed=round(time.time() - t0, 1))
 
 
 # ---------------------------------------------------------------- 2. NAD
 def nad_query(layer: str, where: str, limit: int, fmt: str = "geojson") -> list[dict]:
-    """分页拉取。优先 f=geojson，服务不支持时自动降级成 Esri JSON。"""
+    """分页拉取。优先 f=geojson，服务不支持/参数被拒时自动降级成 Esri JSON。"""
     out: list[dict] = []
     offset = 0
+    last_err = ""
     while len(out) < limit:
         batch = min(NAD_PAGE, limit - len(out))
         params = {"where": where, "outFields": "*", "returnGeometry": "true",
                   "outSR": "4326", "resultOffset": offset, "resultRecordCount": batch, "f": fmt}
         try:
             payload = http_json(f"{layer}/query", params, timeout=120, retries=2)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             if fmt != "json":
-                fmt = "json"
+                fmt, last_err = "json", str(exc)[:200]
                 continue
             raise
         if payload.get("error"):
+            if fmt != "json":
+                fmt, last_err = "json", str(payload["error"])[:200]
+                continue
             raise RuntimeError(f"ArcGIS error: {str(payload['error'])[:200]}")
         feats = payload.get("features") or []
         if not feats:
@@ -223,10 +262,15 @@ def nad_query(layer: str, where: str, limit: int, fmt: str = "geojson") -> list[
                 props = dict(feat.get("properties") or {})
                 coords = geom.get("coordinates") or [None, None]
                 props["_lon"], props["_lat"] = coords[0], coords[1]
+            lon, lat = props.get("_lon"), props.get("_lat")
+            if isinstance(lon, (int, float)) and isinstance(lat, (int, float)) and (abs(lon) > 180 or abs(lat) > 90):
+                props["_lon"], props["_lat"] = merc_to_lonlat(lon, lat)   # 3857 降级修正
             out.append(props)
         offset += len(feats)
         if len(feats) < batch:
             break
+    if not out and last_err:
+        raise RuntimeError(f"ArcGIS 两种格式均失败：{last_err}")
     return out
 
 
@@ -266,15 +310,18 @@ def fetch_nad() -> dict:
     } for row in merged]
     write_csv(OUT / "nad_dover_19901.csv", mapped[:SAMPLE_N],
               ["number", "street", "unit", "city", "state", "postcode", "lon", "lat", "source_dataset"])
-    (RAW / "nad_dover_19901.geojson").write_text(json.dumps(
+    raw_geojson = RAW / "nad_dover_19901.geojson"
+    raw_geojson.write_text(json.dumps(
         {"type": "FeatureCollection", "features": [
             {"type": "Feature", "properties": {k: v for k, v in r.items() if not k.startswith("_")},
              "geometry": {"type": "Point", "coordinates": [r["lon"], r["lat"]]}} for r in mapped]},
         ensure_ascii=False), encoding="utf-8")
+    main_state = write_align_source("nad_arcgis", mapped)
     return record("nad_arcgis", "ok", layer=layer, where_zip=f"{STATE}+{ZIP_MAIN}",
                   where_city=f"{STATE}+{CITY}", rows_zip=len(rows_zip), rows_city=len(rows_city),
-                  rows_dedup=len(merged), sample=SAMPLE_N, official_query_error=official_error,
-                  notes=notes, elapsed=round(time.time() - t0, 1))
+                  rows_dedup=len(merged), main_state_hits=main_state, sample=SAMPLE_N,
+                  official_query_error=official_error, notes=notes, file=shrink(raw_geojson),
+                  elapsed=round(time.time() - t0, 1))
 
 
 # ---------------------------------------------------------------- 3. OpenAddresses
@@ -313,9 +360,11 @@ def fetch_openaddresses() -> dict:
         hit = [r for r in all_rows if r.get("lon") and in_bbox(float(r["lon"]), float(r["lat"]))]
     write_csv(OUT / "openaddresses_19901.csv", hit[:SAMPLE_N],
               ["number", "street", "unit", "city", "state", "postcode", "lon", "lat"])
+    main_state = write_align_source("openaddresses", all_rows)
     status = "ok" if all_rows else "error"
     return record("openaddresses", status, targets=len(targets), rows=len(all_rows),
-                  rows_19901=len(hit), sample=SAMPLE_N, detail=detail, elapsed=round(time.time() - t0, 1))
+                  rows_19901=len(hit), main_state_hits=main_state, sample=SAMPLE_N, detail=detail,
+                  elapsed=round(time.time() - t0, 1))
 
 
 def parse_oa_zip(blob: bytes) -> tuple[list[dict], list[str]]:
@@ -414,12 +463,8 @@ def read_sample(path: Path) -> list[dict]:
 def build_alignment() -> dict:
     picked: list[dict] = []
     stats = {}
-    for source, name in (("overture", "overture_19901.csv"), ("nad_arcgis", "nad_dover_19901.csv"),
-                         ("openaddresses", "openaddresses_19901.csv")):
-        rows = [r for r in read_sample(OUT / name)
-                if norm_zip(r.get("postcode")) in ZIPS
-                and re.search(r"\b(MAIN|STATE)\b", str(r.get("street", "")).upper())]
-        rows.sort(key=lambda r: (str(r.get("street", "")), str(r.get("number", ""))))
+    for source in ("overture", "nad_arcgis", "openaddresses"):
+        rows = read_sample(OUT / f"align_src_{source}.csv")
         stats[source] = len(rows)
         for row in rows[:SAMPLE_N]:
             picked.append({"source": source, **{k: row.get(k, "") for k in ALIGN_FIELDS[1:]}})

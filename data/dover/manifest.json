@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-14T18:16:22Z",
+ "generated_at": "2026-10-14T18:23:12Z",
  "anchors": {
   "state": "DE",
   "state_fips": "10",
@@ -18,12 +18,12 @@
    39.22
   ]
  },
- "runner": "38612994894",
+ "runner": "38613873154",
  "sources": [
   {
    "source": "overture",
    "status": "ok",
-   "ts": "2026-10-14T18:11:28Z",
+   "ts": "2026-10-14T18:17:38Z",
    "bbox": [
     -75.6,
     39.1,
@@ -32,25 +32,27 @@
    ],
    "features_bbox": 28027,
    "features_19901": 24046,
+   "main_state_hits": 510,
    "sample": 500,
    "bytes": 16452588,
    "sha256": "7345d0277642e266",
-   "file": "data/dover/raw/overture_dover.geojson",
-   "elapsed": 2.5
+   "file": "data/dover/raw/overture_dover.geojson.gz",
+   "elapsed": 2.2
   },
   {
    "source": "nad",
    "status": "exception",
-   "ts": "2026-10-14T18:16:17Z",
-   "error": "RuntimeError: ArcGIS error: {'code': 400, 'message': '', 'details': ['Unable to perform query. Please check your parameters.']}"
+   "ts": "2026-10-14T18:23:05Z",
+   "error": "RuntimeError: ArcGIS error: {'code': 400, 'message': 'Cannot perform query. Invalid query parameters.', 'details': ['Unable to perform query. Please check your parameters.']}"
   },
   {
    "source": "openaddresses",
    "status": "ok",
-   "ts": "2026-10-14T18:16:19Z",
+   "ts": "2026-10-14T18:23:09Z",
    "targets": 2,
    "rows": 92455,
    "rows_19901": 29077,
+   "main_state_hits": 414,
    "sample": 500,
    "detail": [
     {
@@ -74,12 +76,12 @@
      "rows_19901": 29077
     }
    ],
-   "elapsed": 2.4
+   "elapsed": 3.5
   },
   {
    "source": "census_tiger",
    "status": "ok",
-   "ts": "2026-10-14T18:16:22Z",
+   "ts": "2026-10-14T18:23:12Z",
    "rest_queries": [
     {
      "key": "zcta",
@@ -152,15 +154,15 @@
      ]
     }
    ],
-   "elapsed": 2.9
+   "elapsed": 3.4
   }
  ],
  "alignment": {
-  "rows": 11,
+  "rows": 914,
   "per_source": {
-   "overture": 0,
+   "overture": 500,
    "nad_arcgis": 0,
-   "openaddresses": 11
+   "openaddresses": 414
   },
   "file": "data/dover/align_19901_main_state.csv"
  }

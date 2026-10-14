@@ -1,0 +1,108 @@
+source,field,non_null,total,fill_pct
+"USDOT NAD (official, 60 cols)",OBJECTID,28028,28028,100.0
+"USDOT NAD (official, 60 cols)",AddNum_Pre,0,28028,0.0
+"USDOT NAD (official, 60 cols)",Add_Number,28028,28028,100.0
+"USDOT NAD (official, 60 cols)",AddNum_Suf,0,28028,0.0
+"USDOT NAD (official, 60 cols)",AddNo_Full,28028,28028,100.0
+"USDOT NAD (official, 60 cols)",St_PreMod,0,28028,0.0
+"USDOT NAD (official, 60 cols)",St_PreDir,4806,28028,17.15
+"USDOT NAD (official, 60 cols)",St_PreTyp,0,28028,0.0
+"USDOT NAD (official, 60 cols)",St_PreSep,0,28028,0.0
+"USDOT NAD (official, 60 cols)",St_Name,28028,28028,100.0
+"USDOT NAD (official, 60 cols)",St_PosTyp,27853,28028,99.38
+"USDOT NAD (official, 60 cols)",St_PosDir,82,28028,0.29
+"USDOT NAD (official, 60 cols)",St_PosMod,0,28028,0.0
+"USDOT NAD (official, 60 cols)",StNam_Full,28028,28028,100.0
+"USDOT NAD (official, 60 cols)",Building,0,28028,0.0
+"USDOT NAD (official, 60 cols)",Floor,0,28028,0.0
+"USDOT NAD (official, 60 cols)",Unit,52,28028,0.19
+"USDOT NAD (official, 60 cols)",Room,0,28028,0.0
+"USDOT NAD (official, 60 cols)",Seat,0,28028,0.0
+"USDOT NAD (official, 60 cols)",Addtl_Loc,0,28028,0.0
+"USDOT NAD (official, 60 cols)",SubAddress,52,28028,0.19
+"USDOT NAD (official, 60 cols)",LandmkName,0,28028,0.0
+"USDOT NAD (official, 60 cols)",County,28028,28028,100.0
+"USDOT NAD (official, 60 cols)",Inc_Muni,28028,28028,100.0
+"USDOT NAD (official, 60 cols)",Post_City,28028,28028,100.0
+"USDOT NAD (official, 60 cols)",Census_Plc,4590,28028,16.38
+"USDOT NAD (official, 60 cols)",Uninc_Comm,0,28028,0.0
+"USDOT NAD (official, 60 cols)",Nbrhd_Comm,28028,28028,100.0
+"USDOT NAD (official, 60 cols)",NatAmArea,776,28028,2.77
+"USDOT NAD (official, 60 cols)",NatAmSub,0,28028,0.0
+"USDOT NAD (official, 60 cols)",Urbnztn_PR,0,28028,0.0
+"USDOT NAD (official, 60 cols)",PlaceOther,0,28028,0.0
+"USDOT NAD (official, 60 cols)",PlaceNmTyp,0,28028,0.0
+"USDOT NAD (official, 60 cols)",State,28028,28028,100.0
+"USDOT NAD (official, 60 cols)",Zip_Code,28028,28028,100.0
+"USDOT NAD (official, 60 cols)",Plus_4,0,28028,0.0
+"USDOT NAD (official, 60 cols)",UUID,28028,28028,100.0
+"USDOT NAD (official, 60 cols)",AddAuth,28028,28028,100.0
+"USDOT NAD (official, 60 cols)",AddrRefSys,0,28028,0.0
+"USDOT NAD (official, 60 cols)",Longitude,28028,28028,100.0
+"USDOT NAD (official, 60 cols)",Latitude,28028,28028,100.0
+"USDOT NAD (official, 60 cols)",NatGrid,28028,28028,100.0
+"USDOT NAD (official, 60 cols)",Elevation,0,28028,0.0
+"USDOT NAD (official, 60 cols)",Placement,28028,28028,100.0
+"USDOT NAD (official, 60 cols)",AddrPoint,28028,28028,100.0
+"USDOT NAD (official, 60 cols)",Related_ID,0,28028,0.0
+"USDOT NAD (official, 60 cols)",RelateType,0,28028,0.0
+"USDOT NAD (official, 60 cols)",ParcelSrc,0,28028,0.0
+"USDOT NAD (official, 60 cols)",Parcel_ID,0,28028,0.0
+"USDOT NAD (official, 60 cols)",AddrClass,28028,28028,100.0
+"USDOT NAD (official, 60 cols)",Lifecycle,0,28028,0.0
+"USDOT NAD (official, 60 cols)",Effective,0,28028,0.0
+"USDOT NAD (official, 60 cols)",Expire,0,28028,0.0
+"USDOT NAD (official, 60 cols)",DateUpdate,28028,28028,100.0
+"USDOT NAD (official, 60 cols)",AnomStatus,0,28028,0.0
+"USDOT NAD (official, 60 cols)",LocatnDesc,0,28028,0.0
+"USDOT NAD (official, 60 cols)",Addr_Type,28028,28028,100.0
+"USDOT NAD (official, 60 cols)",DeliverTyp,0,28028,0.0
+"USDOT NAD (official, 60 cols)",NAD_Source,28028,28028,100.0
+"USDOT NAD (official, 60 cols)",DataSet_ID,28028,28028,100.0
+Overture Maps (bbox 全量),address_levels,28027,28027,100.0
+Overture Maps (bbox 全量),country,28027,28027,100.0
+Overture Maps (bbox 全量),lat,28027,28027,100.0
+Overture Maps (bbox 全量),lon,28027,28027,100.0
+Overture Maps (bbox 全量),number,28027,28027,100.0
+Overture Maps (bbox 全量),postal_city,28027,28027,100.0
+Overture Maps (bbox 全量),postcode,28027,28027,100.0
+Overture Maps (bbox 全量),sources,28027,28027,100.0
+Overture Maps (bbox 全量),street,28027,28027,100.0
+Overture Maps (bbox 全量),unit,52,28027,0.19
+Overture Maps (bbox 全量),version,28027,28027,100.0
+OpenAddresses us/de (全量),LON,92455,92455,100.0
+OpenAddresses us/de (全量),LAT,92455,92455,100.0
+OpenAddresses us/de (全量),NUMBER,91808,92455,99.3
+OpenAddresses us/de (全量),STREET,92421,92455,99.96
+OpenAddresses us/de (全量),UNIT,577,92455,0.62
+OpenAddresses us/de (全量),CITY,74141,92455,80.19
+OpenAddresses us/de (全量),DISTRICT,0,92455,0.0
+OpenAddresses us/de (全量),REGION,0,92455,0.0
+OpenAddresses us/de (全量),POSTCODE,79512,92455,86.0
+OpenAddresses us/de (全量),ID,0,92455,0.0
+OpenAddresses us/de (全量),HASH,92455,92455,100.0
+Census TIGER addrfeat (Kent 全量),TLID,11072,11072,100.0
+Census TIGER addrfeat (Kent 全量),TFIDL,11072,11072,100.0
+Census TIGER addrfeat (Kent 全量),TFIDR,11072,11072,100.0
+Census TIGER addrfeat (Kent 全量),ARIDL,8978,11072,81.09
+Census TIGER addrfeat (Kent 全量),ARIDR,8914,11072,80.51
+Census TIGER addrfeat (Kent 全量),LINEARID,11072,11072,100.0
+Census TIGER addrfeat (Kent 全量),FULLNAME,11072,11072,100.0
+Census TIGER addrfeat (Kent 全量),LFROMHN,8978,11072,81.09
+Census TIGER addrfeat (Kent 全量),LTOHN,8978,11072,81.09
+Census TIGER addrfeat (Kent 全量),RFROMHN,8914,11072,80.51
+Census TIGER addrfeat (Kent 全量),RTOHN,8914,11072,80.51
+Census TIGER addrfeat (Kent 全量),ZIPL,8978,11072,81.09
+Census TIGER addrfeat (Kent 全量),ZIPR,8914,11072,80.51
+Census TIGER addrfeat (Kent 全量),EDGE_MTFCC,11072,11072,100.0
+Census TIGER addrfeat (Kent 全量),ROAD_MTFCC,11072,11072,100.0
+Census TIGER addrfeat (Kent 全量),PARITYL,8978,11072,81.09
+Census TIGER addrfeat (Kent 全量),PARITYR,8914,11072,80.51
+Census TIGER addrfeat (Kent 全量),PLUS4L,0,11072,0.0
+Census TIGER addrfeat (Kent 全量),PLUS4R,0,11072,0.0
+Census TIGER addrfeat (Kent 全量),LFROMTYP,1762,11072,15.91
+Census TIGER addrfeat (Kent 全量),LTOTYP,1820,11072,16.44
+Census TIGER addrfeat (Kent 全量),RFROMTYP,1641,11072,14.82
+Census TIGER addrfeat (Kent 全量),RTOTYP,1762,11072,15.91
+Census TIGER addrfeat (Kent 全量),OFFSETL,11072,11072,100.0
+Census TIGER addrfeat (Kent 全量),OFFSETR,11072,11072,100.0

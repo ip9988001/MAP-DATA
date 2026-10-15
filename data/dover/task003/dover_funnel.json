@@ -1,0 +1,131 @@
+{
+ "generated_at": "2026-10-15T07:25:15Z",
+ "bbox": [
+  -75.6,
+  39.1,
+  -75.45,
+  39.22
+ ],
+ "tiger_crs": "NAD83",
+ "nad_raw_rows": 28028,
+ "nad_dirty_dropped": {},
+ "nad_dirty_dropped_total": 0,
+ "overture_raw_features": 28027,
+ "overture_upstream": {
+  "NAD": 28027
+ },
+ "overture_dirty_dropped": {
+  "coord_null_or_out_of_bbox": 1
+ },
+ "tiger_addrfeat_raw_rows": 11072,
+ "tiger_plus4_fill_rate": 0.0,
+ "tiger_unique_street_keys": 6588,
+ "oa_matched_to_nad": 25662,
+ "oa_b_tier_orphan_dropped": 1824,
+ "overture_matched_to_nad": 26702,
+ "overture_b_tier_orphan_dropped": 1324,
+ "nad_outside_kent_boundary_dropped": 0,
+ "nad_duplicate_after_merge_dropped": 865,
+ "s_tier_kept": 25018,
+ "a_tier_kept": 2145,
+ "s_tier_breakdown": {
+  "NAD+TIGER+OA(+Overture)": 24485,
+  "NAD+TIGER+Overture-only(自证)": 533
+ },
+ "tiger_verify_breakdown": {
+  "range_verified": 23857,
+  "street_only": 1253,
+  "no_tiger_street": 2053
+ },
+ "boundary_hits": {
+  "in_kent_county": 28028,
+  "in_zcta_19901_19904": 24287,
+  "in_dover_place": 14285
+ },
+ "golden_total": 27163,
+ "sample_pool_main_zips": 23196,
+ "oa_source_stats": {
+  "kent_raw_rows": 79723,
+  "city_of_dover_raw_rows": 12732,
+  "oa_internal_dup_dropped": 11938,
+  "oa_literal_pair_intersection": 11659,
+  "oa_city_rows_hit_by_literal_pair": 11747,
+  "oa_internal_dup_dropped_by_file": {
+   "city_of_dover": 11938
+  },
+  "oa_empty_number_by_file": {
+   "kent": 125,
+   "city_of_dover": 522
+  },
+  "oa_dirty_dropped": {
+   "coord_out_of_bbox": 52002,
+   "unit_ltnull": 112,
+   "city_ltnull": 111,
+   "number_zero": 240,
+   "street_empty": 34,
+   "street_only_no_number": 643,
+   "number_empty": 4
+  },
+  "oa_dirty_dropped_by_file": {
+   "kent": {
+    "coord_out_of_bbox": 52002,
+    "unit_ltnull": 112,
+    "city_ltnull": 111,
+    "number_zero": 240,
+    "street_empty": 34,
+    "street_only_no_number": 121,
+    "number_empty": 4
+   },
+   "city_of_dover": {
+    "street_only_no_number": 522
+   }
+  },
+  "oa_dirty_dropped_total": 53146,
+  "oa_clean_rows": 27486,
+  "oa_clean_by_file": {
+   "kent": 27214,
+   "city_of_dover": 272
+  }
+ },
+ "distributions": {
+  "zip5": {
+   "19936": 369,
+   "19904": 11731,
+   "19962": 429,
+   "19901": 11465,
+   "19934": 2950,
+   "19902": 218,
+   "19961": 1
+  },
+  "addr_type": {
+   "Residential (Multi-Unit)": 51,
+   "Residential": 26456,
+   "Commercial": 656
+  },
+  "tier": {
+   "S-Tier": 25018,
+   "A-Tier": 2145
+  },
+  "unit_non_null": 51,
+  "multi_unit_buildings": 21,
+  "tiger_verify": {
+   "range": 23857,
+   "none": 2053,
+   "street": 1253
+  }
+ },
+ "nad_addr_type_placement_groupby": {
+  "Unknown | Unknown": 28028
+ },
+ "nad_addrclass_groupby": {
+  "Numbered Thoroughfare Address": 28028
+ },
+ "notes": [],
+ "outputs": {
+  "jsonl": "data/dover/task003/dover_golden_addresses.jsonl",
+  "csv": "data/dover/task003/dover_golden_addresses.csv",
+  "sample50": "data/dover/task003/golden_sample_50.csv",
+  "fillrate": "data/dover/task003/golden_fillrate_24fields.csv",
+  "comparisons": "data/dover/task003/five_address_4source_comparisons.json"
+ }
+}

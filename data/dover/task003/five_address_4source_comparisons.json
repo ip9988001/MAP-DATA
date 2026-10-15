@@ -1,0 +1,990 @@
+[
+ {
+  "key": {
+   "house_number": "179",
+   "street": "COMMERCE Street",
+   "normalized_loose": "COMMERCE|ST",
+   "unit": "Apt A",
+   "tier": "S-Tier",
+   "tiger_verify": "range"
+  },
+  "NAD_raw": {
+   "OBJECTID": 98139018,
+   "Add_Number": 179,
+   "AddNo_Full": "179",
+   "St_Name": "COMMERCE",
+   "St_PosTyp": "Street",
+   "StNam_Full": "COMMERCE Street",
+   "Unit": "APT A",
+   "SubAddress": "APT A",
+   "County": "Kent",
+   "Inc_Muni": "Cheswold",
+   "Post_City": "Cheswold",
+   "Nbrhd_Comm": "Cheswold",
+   "State": "DE",
+   "Zip_Code": "19936",
+   "UUID": "054d8a30-b88b-4211-8ae0-684d1b53e864",
+   "AddAuth": "Kent County Delaware",
+   "Longitude": -75.58606037592598,
+   "Latitude": 39.21829360455592,
+   "NatGrid": "18SVJ4940841164",
+   "Placement": "Unknown",
+   "AddrPoint": "-75.58606037592598 39.21829360455592",
+   "AddrClass": "Numbered Thoroughfare Address",
+   "DateUpdate": 1613735141000,
+   "Addr_Type": "Unknown",
+   "NAD_Source": "Kent County Delaware",
+   "DataSet_ID": "{054d8a30-b88b-4211-8ae0-684d1b53e864}",
+   "_lon": -75.58606037576688,
+   "_lat": 39.21829360505618
+  },
+  "Overture_raw": {
+   "street": "COMMERCE Street",
+   "number": "179",
+   "unit": "APT E",
+   "postcode": "19936",
+   "postal_city": "Cheswold",
+   "address_levels": [
+    {
+     "value": "DE"
+    },
+    {
+     "value": "Cheswold"
+    }
+   ],
+   "country": "US",
+   "sources": [
+    {
+     "property": "",
+     "dataset": "NAD",
+     "license": "LicenseRef-Public-Domain-US",
+     "record_id": "F4A058D6-F9C0-4E3F-8E48-69AB5E24A719",
+     "update_time": "2026-09-18T19:39:08.275Z",
+     "confidence": null,
+     "between": null,
+     "provider": "nad",
+     "resource": "nad",
+     "version": "20250924"
+    }
+   ],
+   "version": 1,
+   "_lon": -75.58606037592598,
+   "_lat": 39.21829360455592,
+   "_id": "591951fc-53c1-4191-87cb-a84a3d1ac913",
+   "_upstream": "NAD"
+  },
+  "OpenAddresses_raw": {
+   "LON": "-75.5860585",
+   "LAT": "39.2182857",
+   "NUMBER": "179",
+   "STREET": "COMMERCE ST",
+   "UNIT": "APT E",
+   "CITY": "Cheswold",
+   "POSTCODE": "19936",
+   "HASH": "504ab53b222bbf79"
+  },
+  "TIGER_segments": [
+   {
+    "TLID": "68110055",
+    "FULLNAME": "Commerce St",
+    "LFROMHN": "39",
+    "LTOHN": "27",
+    "RFROMHN": "42",
+    "RTOHN": "24",
+    "PARITYL": "O",
+    "PARITYR": "E",
+    "ZIPL": "19952",
+    "ZIPR": "19952",
+    "PLUS4L": null,
+    "PLUS4R": null,
+    "ROAD_MTFCC": "S1200",
+    "EDGE_MTFCC": "S1200",
+    "matched_key": "COMMERCE|ST",
+    "normalized_ranges(min/max,不含方向)": [
+     [
+      27,
+      39,
+      "O"
+     ],
+     [
+      24,
+      42,
+      "E"
+     ]
+    ]
+   },
+   {
+    "TLID": "68082227",
+    "FULLNAME": "Commerce St",
+    "LFROMHN": "99",
+    "LTOHN": "49",
+    "RFROMHN": "98",
+    "RTOHN": "46",
+    "PARITYL": "O",
+    "PARITYR": "E",
+    "ZIPL": "19952",
+    "ZIPR": "19952",
+    "PLUS4L": null,
+    "PLUS4R": null,
+    "ROAD_MTFCC": "S1200",
+    "EDGE_MTFCC": "S1200",
+    "matched_key": "COMMERCE|ST",
+    "normalized_ranges(min/max,不含方向)": [
+     [
+      49,
+      99,
+      "O"
+     ],
+     [
+      46,
+      98,
+      "E"
+     ]
+    ]
+   },
+   {
+    "TLID": "68082243",
+    "FULLNAME": "Commerce St",
+    "LFROMHN": "199",
+    "LTOHN": "101",
+    "RFROMHN": "198",
+    "RTOHN": "100",
+    "PARITYL": "O",
+    "PARITYR": "E",
+    "ZIPL": "19952",
+    "ZIPR": "19952",
+    "PLUS4L": null,
+    "PLUS4R": null,
+    "ROAD_MTFCC": "S1200",
+    "EDGE_MTFCC": "S1200",
+    "matched_key": "COMMERCE|ST",
+    "normalized_ranges(min/max,不含方向)": [
+     [
+      101,
+      199,
+      "O"
+     ],
+     [
+      100,
+      198,
+      "E"
+     ]
+    ]
+   }
+  ],
+  "golden_record": {
+   "house_number": "179",
+   "house_number_suffix": null,
+   "street_pre_dir": null,
+   "street_name": "Commerce",
+   "street_post_type": "St",
+   "street_post_dir": null,
+   "street_full": "Commerce St",
+   "street_full_long": "Commerce Street",
+   "unit": "Apt A",
+   "building_floor": null,
+   "postal_city": "Cheswold",
+   "municipal_city": "Cheswold",
+   "county_name": "Kent County",
+   "county_fips": "10001",
+   "state_abbr": "DE",
+   "state_name": "Delaware",
+   "state_fips": "10",
+   "zip5": "19936",
+   "plus4": null,
+   "zip9": "19936",
+   "latitude": 39.2182936,
+   "longitude": -75.5860604,
+   "addr_type": "Residential (Multi-Unit)",
+   "area_code": "302",
+   "timezone": "America/New_York",
+   "area_code_and_timezone": "302 | America/New_York (EST/EDT, UTC-5/UTC-4)",
+   "full_formatted_address": "179 Commerce St Apt A, Cheswold, DE 19936",
+   "source_confidence": "S-Tier: NAD+OVERTURE+OA+TIGER[range]",
+   "src_nad_uuid": "054d8a30-b88b-4211-8ae0-684d1b53e864",
+   "src_nad_objectid": 98139018,
+   "src_oa_hash": "504ab53b222bbf79",
+   "src_overture_id": "591951fc-53c1-4191-87cb-a84a3d1ac913",
+   "src_tiger_tlid": "639571004,641108250,646526567,647364692,648696782,650455206,6808",
+   "tiger_verify": "range",
+   "tiger_distance_m": 6390.2,
+   "in_dover_city": false,
+   "in_zcta_19901_19904": false,
+   "nad_addr_type_raw": null,
+   "nad_placement_raw": null,
+   "nad_addclass_raw": "Numbered Thoroughfare Address",
+   "oa_file": "kent",
+   "overture_upstream": "NAD"
+  }
+ },
+ {
+  "key": {
+   "house_number": "2871",
+   "street": "West DENNEYS Road",
+   "normalized_loose": "DENNEYS|RD",
+   "unit": null,
+   "tier": "S-Tier",
+   "tiger_verify": "range"
+  },
+  "NAD_raw": {
+   "OBJECTID": 98136763,
+   "Add_Number": 2871,
+   "AddNo_Full": "2871",
+   "St_PreDir": "West",
+   "St_Name": "DENNEYS",
+   "St_PosTyp": "Road",
+   "StNam_Full": "West DENNEYS Road",
+   "County": "Kent",
+   "Inc_Muni": "Dover",
+   "Post_City": "Dover",
+   "Nbrhd_Comm": "Dover",
+   "State": "DE",
+   "Zip_Code": "19904",
+   "UUID": "5723d5c1-1fdd-4fe5-b5ce-c42da2899272",
+   "AddAuth": "Kent County Delaware",
+   "Longitude": -75.59955526909282,
+   "Latitude": 39.17877170251683,
+   "NatGrid": "18SVJ4821436786",
+   "Placement": "Unknown",
+   "AddrPoint": "-75.59955526909282 39.17877170251683",
+   "AddrClass": "Numbered Thoroughfare Address",
+   "DateUpdate": 1760659200000,
+   "Addr_Type": "Unknown",
+   "NAD_Source": "Kent County Delaware",
+   "DataSet_ID": "{5723d5c1-1fdd-4fe5-b5ce-c42da2899272}",
+   "_lon": -75.59955526861353,
+   "_lat": 39.17877170286764
+  },
+  "Overture_raw": {
+   "street": "West DENNEYS Road",
+   "number": "2871",
+   "postcode": "19904",
+   "postal_city": "Dover",
+   "address_levels": [
+    {
+     "value": "DE"
+    },
+    {
+     "value": "Dover"
+    }
+   ],
+   "country": "US",
+   "sources": [
+    {
+     "property": "",
+     "dataset": "NAD",
+     "license": "LicenseRef-Public-Domain-US",
+     "record_id": "5723D5C1-1FDD-4FE5-B5CE-C42DA2899272",
+     "update_time": "2026-09-18T19:39:08.275Z",
+     "confidence": null,
+     "between": null,
+     "provider": "nad",
+     "resource": "nad",
+     "version": "20250924"
+    }
+   ],
+   "version": 1,
+   "_lon": -75.59955526909282,
+   "_lat": 39.17877170251683,
+   "_id": "5dfa0219-155e-4971-a405-22852c75b1a4",
+   "_upstream": "NAD"
+  },
+  "OpenAddresses_raw": {
+   "LON": "-75.5995534",
+   "LAT": "39.1787638",
+   "NUMBER": "2871",
+   "STREET": "W DENNEYS RD",
+   "CITY": "Dover",
+   "POSTCODE": "19904",
+   "HASH": "49829403a19017e5"
+  },
+  "TIGER_segments": [
+   {
+    "TLID": "641078146",
+    "FULLNAME": "W Denneys Rd",
+    "LFROMHN": "4201",
+    "LTOHN": "4257",
+    "RFROMHN": "4200",
+    "RTOHN": "4298",
+    "PARITYL": "O",
+    "PARITYR": "E",
+    "ZIPL": "19904",
+    "ZIPR": "19904",
+    "PLUS4L": null,
+    "PLUS4R": null,
+    "ROAD_MTFCC": "S1200",
+    "EDGE_MTFCC": "S1200",
+    "matched_key": "W|DENNEYS|RD",
+    "normalized_ranges(min/max,不含方向)": [
+     [
+      4201,
+      4257,
+      "O"
+     ],
+     [
+      4200,
+      4298,
+      "E"
+     ]
+    ]
+   },
+   {
+    "TLID": "68087633",
+    "FULLNAME": "W Denneys Rd",
+    "LFROMHN": "4001",
+    "LTOHN": "4199",
+    "RFROMHN": null,
+    "RTOHN": null,
+    "PARITYL": "O",
+    "PARITYR": null,
+    "ZIPL": "19904",
+    "ZIPR": null,
+    "PLUS4L": null,
+    "PLUS4R": null,
+    "ROAD_MTFCC": "S1200",
+    "EDGE_MTFCC": "S1200",
+    "matched_key": "W|DENNEYS|RD",
+    "normalized_ranges(min/max,不含方向)": [
+     [
+      4001,
+      4199,
+      "O"
+     ]
+    ]
+   },
+   {
+    "TLID": "68113338",
+    "FULLNAME": "W Denneys Rd",
+    "LFROMHN": "4401",
+    "LTOHN": "4499",
+    "RFROMHN": "4300",
+    "RTOHN": "4498",
+    "PARITYL": "O",
+    "PARITYR": "E",
+    "ZIPL": "19904",
+    "ZIPR": "19904",
+    "PLUS4L": null,
+    "PLUS4R": null,
+    "ROAD_MTFCC": "S1200",
+    "EDGE_MTFCC": "S1200",
+    "matched_key": "W|DENNEYS|RD",
+    "normalized_ranges(min/max,不含方向)": [
+     [
+      4401,
+      4499,
+      "O"
+     ],
+     [
+      4300,
+      4498,
+      "E"
+     ]
+    ]
+   }
+  ],
+  "golden_record": {
+   "house_number": "2871",
+   "house_number_suffix": null,
+   "street_pre_dir": "W",
+   "street_name": "Denneys",
+   "street_post_type": "Rd",
+   "street_post_dir": null,
+   "street_full": "W Denneys Rd",
+   "street_full_long": "West Denneys Road",
+   "unit": null,
+   "building_floor": null,
+   "postal_city": "Dover",
+   "municipal_city": "Dover",
+   "county_name": "Kent County",
+   "county_fips": "10001",
+   "state_abbr": "DE",
+   "state_name": "Delaware",
+   "state_fips": "10",
+   "zip5": "19904",
+   "plus4": null,
+   "zip9": "19904",
+   "latitude": 39.1787717,
+   "longitude": -75.5995553,
+   "addr_type": "Residential",
+   "area_code": "302",
+   "timezone": "America/New_York",
+   "area_code_and_timezone": "302 | America/New_York (EST/EDT, UTC-5/UTC-4)",
+   "full_formatted_address": "2871 W Denneys Rd, Dover, DE 19904",
+   "source_confidence": "S-Tier: NAD+OVERTURE+OA+TIGER[range]",
+   "src_nad_uuid": "5723d5c1-1fdd-4fe5-b5ce-c42da2899272",
+   "src_nad_objectid": 98136763,
+   "src_oa_hash": "49829403a19017e5",
+   "src_overture_id": "5dfa0219-155e-4971-a405-22852c75b1a4",
+   "src_tiger_tlid": "601698818,636203727,641078146,641078147,647369932,653012265,6808",
+   "tiger_verify": "range",
+   "tiger_distance_m": 54.7,
+   "in_dover_city": false,
+   "in_zcta_19901_19904": true,
+   "nad_addr_type_raw": null,
+   "nad_placement_raw": null,
+   "nad_addclass_raw": "Numbered Thoroughfare Address",
+   "oa_file": "kent",
+   "overture_upstream": "NAD"
+  }
+ },
+ {
+  "key": {
+   "house_number": "1",
+   "street": "North AMERICAN Avenue",
+   "normalized_loose": "AMERICAN|AVE",
+   "unit": null,
+   "tier": "S-Tier",
+   "tiger_verify": "range"
+  },
+  "NAD_raw": {
+   "OBJECTID": 98170435,
+   "Add_Number": 1,
+   "AddNo_Full": "1",
+   "St_PreDir": "North",
+   "St_Name": "AMERICAN",
+   "St_PosTyp": "Avenue",
+   "StNam_Full": "North AMERICAN Avenue",
+   "County": "Kent",
+   "Inc_Muni": "Dover",
+   "Post_City": "Dover",
+   "Nbrhd_Comm": "Dover",
+   "State": "DE",
+   "Zip_Code": "19901",
+   "UUID": "a955f773-4b51-4e74-be90-cb24de9f2586",
+   "AddAuth": "Kent County Delaware",
+   "Longitude": -75.52447090193627,
+   "Latitude": 39.16221041644114,
+   "NatGrid": "18SVJ5468834908",
+   "Placement": "Unknown",
+   "AddrPoint": "-75.52447090193627 39.16221041644114",
+   "AddrClass": "Numbered Thoroughfare Address",
+   "DateUpdate": 1760659200000,
+   "Addr_Type": "Unknown",
+   "NAD_Source": "Kent County Delaware",
+   "DataSet_ID": "{a955f773-4b51-4e74-be90-cb24de9f2586}",
+   "_lon": -75.5244709016223,
+   "_lat": 39.16221041571502
+  },
+  "Overture_raw": {
+   "street": "North AMERICAN Avenue",
+   "number": "1",
+   "postcode": "19901",
+   "postal_city": "Dover",
+   "address_levels": [
+    {
+     "value": "DE"
+    },
+    {
+     "value": "Dover"
+    }
+   ],
+   "country": "US",
+   "sources": [
+    {
+     "property": "",
+     "dataset": "NAD",
+     "license": "LicenseRef-Public-Domain-US",
+     "record_id": "A955F773-4B51-4E74-BE90-CB24DE9F2586",
+     "update_time": "2026-09-18T19:39:08.275Z",
+     "confidence": null,
+     "between": null,
+     "provider": "nad",
+     "resource": "nad",
+     "version": "20250924"
+    }
+   ],
+   "version": 1,
+   "_lon": -75.52447090193627,
+   "_lat": 39.16221041644114,
+   "_id": "ac3edd50-aa65-43f6-9d0d-eaf117c0f81f",
+   "_upstream": "NAD"
+  },
+  "OpenAddresses_raw": {
+   "LON": "-75.5244691",
+   "LAT": "39.1622025",
+   "NUMBER": "1",
+   "STREET": "N AMERICAN AVE",
+   "CITY": "Dover",
+   "POSTCODE": "19901",
+   "HASH": "647cb7684e9af346"
+  },
+  "TIGER_segments": [
+   {
+    "TLID": "68110937",
+    "FULLNAME": "American Ave",
+    "LFROMHN": "100",
+    "LTOHN": "198",
+    "RFROMHN": "101",
+    "RTOHN": "139",
+    "PARITYL": "E",
+    "PARITYR": "O",
+    "ZIPL": "19901",
+    "ZIPR": "19901",
+    "PLUS4L": null,
+    "PLUS4R": null,
+    "ROAD_MTFCC": "S1400",
+    "EDGE_MTFCC": "S1400",
+    "matched_key": "AMERICAN|AVE",
+    "normalized_ranges(min/max,不含方向)": [
+     [
+      100,
+      198,
+      "E"
+     ],
+     [
+      101,
+      139,
+      "O"
+     ]
+    ]
+   },
+   {
+    "TLID": "68088219",
+    "FULLNAME": "American Ave",
+    "LFROMHN": null,
+    "LTOHN": null,
+    "RFROMHN": "17",
+    "RTOHN": "99",
+    "PARITYL": null,
+    "PARITYR": "O",
+    "ZIPL": null,
+    "ZIPR": "19901",
+    "PLUS4L": null,
+    "PLUS4R": null,
+    "ROAD_MTFCC": "S1400",
+    "EDGE_MTFCC": "S1400",
+    "matched_key": "AMERICAN|AVE",
+    "normalized_ranges(min/max,不含方向)": [
+     [
+      17,
+      99,
+      "O"
+     ]
+    ]
+   },
+   {
+    "TLID": "68110938",
+    "FULLNAME": "American Ave",
+    "LFROMHN": "200",
+    "LTOHN": "212",
+    "RFROMHN": "141",
+    "RTOHN": "199",
+    "PARITYL": "E",
+    "PARITYR": "O",
+    "ZIPL": "19901",
+    "ZIPR": "19901",
+    "PLUS4L": null,
+    "PLUS4R": null,
+    "ROAD_MTFCC": "S1400",
+    "EDGE_MTFCC": "S1400",
+    "matched_key": "AMERICAN|AVE",
+    "normalized_ranges(min/max,不含方向)": [
+     [
+      200,
+      212,
+      "E"
+     ],
+     [
+      141,
+      199,
+      "O"
+     ]
+    ]
+   }
+  ],
+  "golden_record": {
+   "house_number": "1",
+   "house_number_suffix": null,
+   "street_pre_dir": "N",
+   "street_name": "American",
+   "street_post_type": "Ave",
+   "street_post_dir": null,
+   "street_full": "N American Ave",
+   "street_full_long": "North American Avenue",
+   "unit": null,
+   "building_floor": null,
+   "postal_city": "Dover",
+   "municipal_city": "Dover",
+   "county_name": "Kent County",
+   "county_fips": "10001",
+   "state_abbr": "DE",
+   "state_name": "Delaware",
+   "state_fips": "10",
+   "zip5": "19901",
+   "plus4": null,
+   "zip9": "19901",
+   "latitude": 39.1622104,
+   "longitude": -75.5244709,
+   "addr_type": "Residential",
+   "area_code": "302",
+   "timezone": "America/New_York",
+   "area_code_and_timezone": "302 | America/New_York (EST/EDT, UTC-5/UTC-4)",
+   "full_formatted_address": "1 N American Ave, Dover, DE 19901",
+   "source_confidence": "S-Tier: NAD+OVERTURE+OA+TIGER[range]",
+   "src_nad_uuid": "a955f773-4b51-4e74-be90-cb24de9f2586",
+   "src_nad_objectid": 98170435,
+   "src_oa_hash": "647cb7684e9af346",
+   "src_overture_id": "ac3edd50-aa65-43f6-9d0d-eaf117c0f81f",
+   "src_tiger_tlid": "68088012,68088219,68099071,68109678,68110937,68110938",
+   "tiger_verify": "range",
+   "tiger_distance_m": 32.8,
+   "in_dover_city": true,
+   "in_zcta_19901_19904": true,
+   "nad_addr_type_raw": null,
+   "nad_placement_raw": null,
+   "nad_addclass_raw": "Numbered Thoroughfare Address",
+   "oa_file": "kent",
+   "overture_upstream": "NAD"
+  }
+ },
+ {
+  "key": {
+   "house_number": "116",
+   "street": "26TH Street",
+   "normalized_loose": "26TH|ST",
+   "unit": null,
+   "tier": "S-Tier",
+   "tiger_verify": "range"
+  },
+  "NAD_raw": {
+   "OBJECTID": 98125586,
+   "Add_Number": 116,
+   "AddNo_Full": "116",
+   "St_Name": "26TH",
+   "St_PosTyp": "Street",
+   "StNam_Full": "26TH Street",
+   "County": "Kent",
+   "Inc_Muni": "Dover",
+   "Post_City": "Dover",
+   "Nbrhd_Comm": "Dover",
+   "State": "DE",
+   "Zip_Code": "19902",
+   "UUID": "601e6a91-fb4e-4dfd-9e95-83ea34025172",
+   "AddAuth": "Kent County Delaware",
+   "Longitude": -75.46892075282754,
+   "Latitude": 39.11815707015073,
+   "NatGrid": "18SVJ5946229993",
+   "Placement": "Unknown",
+   "AddrPoint": "-75.46892075282754 39.11815707015073",
+   "AddrClass": "Numbered Thoroughfare Address",
+   "DateUpdate": 1760659200000,
+   "Addr_Type": "Unknown",
+   "NAD_Source": "Kent County Delaware",
+   "DataSet_ID": "{601e6a91-fb4e-4dfd-9e95-83ea34025172}",
+   "_lon": -75.46892075262382,
+   "_lat": 39.11815706975365
+  },
+  "Overture_raw": {
+   "street": "26TH Street",
+   "number": "116",
+   "postcode": "19902",
+   "postal_city": "Dover",
+   "address_levels": [
+    {
+     "value": "DE"
+    },
+    {
+     "value": "Dover"
+    }
+   ],
+   "country": "US",
+   "sources": [
+    {
+     "property": "",
+     "dataset": "NAD",
+     "license": "LicenseRef-Public-Domain-US",
+     "record_id": "601E6A91-FB4E-4DFD-9E95-83EA34025172",
+     "update_time": "2026-09-18T19:39:08.275Z",
+     "confidence": null,
+     "between": null,
+     "provider": "nad",
+     "resource": "nad",
+     "version": "20250924"
+    }
+   ],
+   "version": 1,
+   "_lon": -75.46892075282754,
+   "_lat": 39.11815707015073,
+   "_id": "406061ec-89f1-4c6f-895a-0b1791463288",
+   "_upstream": "NAD"
+  },
+  "OpenAddresses_raw": {
+   "LON": "-75.4689189",
+   "LAT": "39.1181492",
+   "NUMBER": "116",
+   "STREET": "26TH ST",
+   "CITY": "Dover",
+   "POSTCODE": "19902",
+   "HASH": "94da87621dc8357f"
+  },
+  "TIGER_segments": [
+   {
+    "TLID": "68093527",
+    "FULLNAME": "26th St",
+    "LFROMHN": null,
+    "LTOHN": null,
+    "RFROMHN": "100",
+    "RTOHN": "198",
+    "PARITYL": null,
+    "PARITYR": "E",
+    "ZIPL": null,
+    "ZIPR": "19902",
+    "PLUS4L": null,
+    "PLUS4R": null,
+    "ROAD_MTFCC": "S1400",
+    "EDGE_MTFCC": "S1400",
+    "matched_key": "26TH|ST",
+    "normalized_ranges(min/max,不含方向)": [
+     [
+      100,
+      198,
+      "E"
+     ]
+    ]
+   }
+  ],
+  "golden_record": {
+   "house_number": "116",
+   "house_number_suffix": null,
+   "street_pre_dir": null,
+   "street_name": "26th",
+   "street_post_type": "St",
+   "street_post_dir": null,
+   "street_full": "26th St",
+   "street_full_long": "26th Street",
+   "unit": null,
+   "building_floor": null,
+   "postal_city": "Dover",
+   "municipal_city": "Dover",
+   "county_name": "Kent County",
+   "county_fips": "10001",
+   "state_abbr": "DE",
+   "state_name": "Delaware",
+   "state_fips": "10",
+   "zip5": "19902",
+   "plus4": null,
+   "zip9": "19902",
+   "latitude": 39.1181571,
+   "longitude": -75.4689208,
+   "addr_type": "Residential",
+   "area_code": "302",
+   "timezone": "America/New_York",
+   "area_code_and_timezone": "302 | America/New_York (EST/EDT, UTC-5/UTC-4)",
+   "full_formatted_address": "116 26th St, Dover, DE 19902",
+   "source_confidence": "S-Tier: NAD+OVERTURE+OA+TIGER[range]",
+   "src_nad_uuid": "601e6a91-fb4e-4dfd-9e95-83ea34025172",
+   "src_nad_objectid": 98125586,
+   "src_oa_hash": "94da87621dc8357f",
+   "src_overture_id": "406061ec-89f1-4c6f-895a-0b1791463288",
+   "src_tiger_tlid": "68093527",
+   "tiger_verify": "range",
+   "tiger_distance_m": 157.0,
+   "in_dover_city": true,
+   "in_zcta_19901_19904": false,
+   "nad_addr_type_raw": null,
+   "nad_placement_raw": null,
+   "nad_addclass_raw": "Numbered Thoroughfare Address",
+   "oa_file": "kent",
+   "overture_upstream": "NAD"
+  }
+ },
+ {
+  "key": {
+   "house_number": "403",
+   "street": "9TH Street",
+   "normalized_loose": "9TH|ST",
+   "unit": null,
+   "tier": "S-Tier",
+   "tiger_verify": "range"
+  },
+  "NAD_raw": {
+   "OBJECTID": 98128873,
+   "Add_Number": 403,
+   "AddNo_Full": "403",
+   "St_Name": "9TH",
+   "St_PosTyp": "Street",
+   "StNam_Full": "9TH Street",
+   "County": "Kent",
+   "Inc_Muni": "Dover",
+   "Post_City": "Dover",
+   "Nbrhd_Comm": "Dover",
+   "State": "DE",
+   "Zip_Code": "19902",
+   "UUID": "6b73949f-1d31-45be-b4e5-c8d59ccae51f",
+   "AddAuth": "Kent County Delaware",
+   "Longitude": -75.48217778514383,
+   "Latitude": 39.124980497727336,
+   "NatGrid": "18SVJ5832030756",
+   "Placement": "Unknown",
+   "AddrPoint": "-75.48217778514383 39.124980497727336",
+   "AddrClass": "Numbered Thoroughfare Address",
+   "DateUpdate": 1552580673000,
+   "Addr_Type": "Unknown",
+   "NAD_Source": "Kent County Delaware",
+   "DataSet_ID": "{6b73949f-1d31-45be-b4e5-c8d59ccae51f}",
+   "_lon": -75.48217778505798,
+   "_lat": 39.12498049805651
+  },
+  "Overture_raw": {
+   "street": "9TH Street",
+   "number": "403",
+   "postcode": "19902",
+   "postal_city": "Dover",
+   "address_levels": [
+    {
+     "value": "DE"
+    },
+    {
+     "value": "Dover"
+    }
+   ],
+   "country": "US",
+   "sources": [
+    {
+     "property": "",
+     "dataset": "NAD",
+     "license": "LicenseRef-Public-Domain-US",
+     "record_id": "6B73949F-1D31-45BE-B4E5-C8D59CCAE51F",
+     "update_time": "2026-09-18T19:39:08.275Z",
+     "confidence": null,
+     "between": null,
+     "provider": "nad",
+     "resource": "nad",
+     "version": "20250924"
+    }
+   ],
+   "version": 1,
+   "_lon": -75.48217778514383,
+   "_lat": 39.124980497727336,
+   "_id": "58020404-2bcf-4843-8399-9b3542b824f1",
+   "_upstream": "NAD"
+  },
+  "OpenAddresses_raw": {
+   "LON": "-75.482176",
+   "LAT": "39.1249726",
+   "NUMBER": "403",
+   "STREET": "9TH ST",
+   "CITY": "Dover",
+   "POSTCODE": "19902",
+   "HASH": "ae311ea56a7a277c"
+  },
+  "TIGER_segments": [
+   {
+    "TLID": "68083455",
+    "FULLNAME": "NE 9th St",
+    "LFROMHN": "1",
+    "LTOHN": "99",
+    "RFROMHN": null,
+    "RTOHN": null,
+    "PARITYL": "O",
+    "PARITYR": null,
+    "ZIPL": "19963",
+    "ZIPR": null,
+    "PLUS4L": null,
+    "PLUS4R": null,
+    "ROAD_MTFCC": "S1400",
+    "EDGE_MTFCC": "S1400",
+    "matched_key": "9TH|ST",
+    "normalized_ranges(min/max,不含方向)": [
+     [
+      1,
+      99,
+      "O"
+     ]
+    ]
+   },
+   {
+    "TLID": "641695676",
+    "FULLNAME": "9th St",
+    "LFROMHN": "498",
+    "LTOHN": "400",
+    "RFROMHN": null,
+    "RTOHN": null,
+    "PARITYL": "E",
+    "PARITYR": null,
+    "ZIPL": "19902",
+    "ZIPR": null,
+    "PLUS4L": null,
+    "PLUS4R": null,
+    "ROAD_MTFCC": "S1400",
+    "EDGE_MTFCC": "S1400",
+    "matched_key": "9TH|ST",
+    "normalized_ranges(min/max,不含方向)": [
+     [
+      400,
+      498,
+      "E"
+     ]
+    ]
+   },
+   {
+    "TLID": "620131358",
+    "FULLNAME": "9th St",
+    "LFROMHN": null,
+    "LTOHN": null,
+    "RFROMHN": "499",
+    "RTOHN": "401",
+    "PARITYL": null,
+    "PARITYR": "O",
+    "ZIPL": null,
+    "ZIPR": "19902",
+    "PLUS4L": null,
+    "PLUS4R": null,
+    "ROAD_MTFCC": "S1400",
+    "EDGE_MTFCC": "S1400",
+    "matched_key": "9TH|ST",
+    "normalized_ranges(min/max,不含方向)": [
+     [
+      401,
+      499,
+      "O"
+     ]
+    ]
+   }
+  ],
+  "golden_record": {
+   "house_number": "403",
+   "house_number_suffix": null,
+   "street_pre_dir": null,
+   "street_name": "9th",
+   "street_post_type": "St",
+   "street_post_dir": null,
+   "street_full": "9th St",
+   "street_full_long": "9th Street",
+   "unit": null,
+   "building_floor": null,
+   "postal_city": "Dover",
+   "municipal_city": "Dover",
+   "county_name": "Kent County",
+   "county_fips": "10001",
+   "state_abbr": "DE",
+   "state_name": "Delaware",
+   "state_fips": "10",
+   "zip5": "19902",
+   "plus4": null,
+   "zip9": "19902",
+   "latitude": 39.1249805,
+   "longitude": -75.4821778,
+   "addr_type": "Residential",
+   "area_code": "302",
+   "timezone": "America/New_York",
+   "area_code_and_timezone": "302 | America/New_York (EST/EDT, UTC-5/UTC-4)",
+   "full_formatted_address": "403 9th St, Dover, DE 19902",
+   "source_confidence": "S-Tier: NAD+OVERTURE+OA+TIGER[range]",
+   "src_nad_uuid": "6b73949f-1d31-45be-b4e5-c8d59ccae51f",
+   "src_nad_objectid": 98128873,
+   "src_oa_hash": "ae311ea56a7a277c",
+   "src_overture_id": "58020404-2bcf-4843-8399-9b3542b824f1",
+   "src_tiger_tlid": "620131358,641695676,68083455",
+   "tiger_verify": "range",
+   "tiger_distance_m": 58.7,
+   "in_dover_city": true,
+   "in_zcta_19901_19904": false,
+   "nad_addr_type_raw": null,
+   "nad_placement_raw": null,
+   "nad_addclass_raw": "Numbered Thoroughfare Address",
+   "oa_file": "kent",
+   "overture_upstream": "NAD"
+  }
+ }
+]

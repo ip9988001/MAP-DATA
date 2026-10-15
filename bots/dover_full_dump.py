@@ -190,16 +190,16 @@ TIGER_QUERIES = [
     ("county_kent", df.TIGER_COUNTY,
      [(f"STATE='{df.STATE_FIPS}' AND COUNTY='{df.COUNTY_FIPS}'", "GEOID,BASENAME,STATE,COUNTY,NAME"),
       (f"STATEFP='{df.STATE_FIPS}' AND COUNTYFP='{df.COUNTY_FIPS}'", "GEOID,BASENAME,STATEFP,COUNTYFP,NAME")]),
-    # ⚠️ State 图层没有 BASENAME 字段 → 之前 outFields 带 BASENAME 直接被 400 掉（记住：先看图层元数据再写字段）
+    # ⚠️ 这个 State 图层的真实字段是 `STATE` / `STUSAB`（**没有** STATEFP / STUSPS）——
+    #    之前带 STATEFP/STUSPS 直接被 400 掉。教训：先读 ?f=json 元数据，再写 where/outFields。
     ("state_de", df.TIGER_STATE,
-     [(f"STATEFP='{df.STATE_FIPS}'", "GEOID,STATEFP,STUSPS,NAME"),
-      (f"STUSPS='{df.STATE}'", "GEOID,STATEFP,STUSPS,NAME"),
-      (f"STATE='{df.STATE_FIPS}'", "GEOID,STATE,STUSPS,NAME")]),
+     [(f"STATE='{df.STATE_FIPS}'", "GEOID,STATE,STUSAB,BASENAME,NAME"),
+      (f"STUSAB='{df.STATE}'", "GEOID,STATE,STUSAB,BASENAME,NAME"),
+      ("1=1", "GEOID,STATE,STUSAB,BASENAME,NAME")]),
 ]
 TIGER_FILES = [
     ("tl_2024_10001_addrfeat.zip", f"{TIGER_BASE}/ADDRFEAT/tl_2024_10001_addrfeat.zip"),
     ("tl_2024_10_place.zip", f"{TIGER_BASE}/PLACE/tl_2024_10_place.zip"),
-    ("tl_2024_10_addrfeat.zip", f"{TIGER_BASE}/ADDRFEAT/tl_2024_10_addrfeat.zip"),
 ]
 
 

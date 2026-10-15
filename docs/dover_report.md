@@ -1,6 +1,6 @@
 # Dover, DE 四源取样报告（自动生成）
 
-> 生成时间：2026-10-14 19:36:57Z ｜ 运行位置：**GitHub Actions**（本机服务器零下载）
+> 生成时间：2026-10-15 10:38:56Z ｜ 运行位置：**GitHub Actions**（本机服务器零下载）
 > 锚定参数：州 `DE`/FIPS `10`｜县 `Kent County`/FIPS `10001`｜市 `Dover`/Place FIPS `1021200`｜邮编 `19901`, `19904`｜BBox `[-75.6, 39.1, -75.45, 39.22]`
 
 ## 0. 四源状态
@@ -261,6 +261,22 @@ OBJECTID, AddNum_Pre, Add_Number, AddNum_Suf, AddNo_Full, St_PreMod, St_PreDir, 
 - `data/dover/raw/tiger_zcta.json` — 173,558 B
 - `data/dover/raw/tl_2024_10001_addrfeat.zip` — 1,409,495 B
 - `data/dover/raw/tl_2024_10_place.zip` — 444,861 B
+- `data/dover/task001/fillrate_4sources.csv` — 6,178 B
+- `data/dover/task001/relay_post.md` — 10,752 B
+- `data/dover/task001/task001_records.csv` — 37,089 B
+- `data/dover/task001/task001_records.jsonl` — 61,336 B
+- `data/dover/task001/tiger_boundary_de_10.json` — 222,086 B
+- `data/dover/task001/tiger_boundary_dover_10' AND BASENAME.json` — 115,976 B
+- `data/dover/task001/tiger_boundary_kent_10' AND COUNTY.json` — 100,774 B
+- `data/dover/task001/tiger_boundary_zcta5_19901.json` — 90,133 B
+- `data/dover/task001/tiger_boundary_zcta5_19904.json` — 87,748 B
+- `data/dover/task003/dover_funnel.json` — 3,025 B
+- `data/dover/task003/dover_golden_addresses.csv` — 11,822,295 B
+- `data/dover/task003/dover_golden_addresses.jsonl` — 33,170,436 B
+- `data/dover/task003/dover_task003_summary.json` — 8,472 B
+- `data/dover/task003/five_address_4source_comparisons.json` — 23,804 B
+- `data/dover/task003/golden_fillrate_24fields.csv` — 815 B
+- `data/dover/task003/golden_sample_50.csv` — 22,319 B
 
 ## 4. 口径与已知边界
 

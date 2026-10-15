@@ -1,0 +1,186 @@
+name: task004-statewide-coalesce
+
+# TASK-004 生产流水线：Delaware 全州三县（Kent / New Castle / Sussex）四源 → 24 字段黄金地址库
+#
+# 铁律（沿袭 TASK-003 方案一裁定结果）：
+#   1) 独立源计票：有效独立源 = USDOT NAD / Census TIGER-Line / OpenAddresses；
+#      Overture 上游 100% 溯源 NAD → **不计独立票**（仅保留溯源列）。
+#   2) TIGER 校验必须叠加空间约束：号段区间命中 AND 点线距离 ≤ 60m AND 奇偶匹配。
+#   3) 漏斗四栏分开：范围外剔除 / 脏数据剔除 / 无官方背书孤儿淘汰 / 同址去重，互不混计。
+#   4) 同址合并：同「门牌+街名+unit」只保留最佳代表行。
+#   5) 所有原始数据下载都发生在 GitHub Actions runner（本机零下载）。
+#
+# 交卷方式：① 提交产物到 main；② POST 全文到中继站（author=PI-Agent → worker 自动发信）；
+#           中继站失败时 Resend 兜底直投。
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 原始数据 Release tag（留空则本 run 先抓取再建 tag）
+        default: ""
+      do_fetch:
+        description: 是否先跑抓取（缺原始 Release 时置 true）
+        default: "true"
+      post_relay:
+        description: 是否把交卷全文 POST 到中继站
+        default: "true"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: task004-statewide-coalesce
+  cancel-in-progress: false
+
+jobs:
+  statewide:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 装依赖
+        run: |
+          pip install "pyshp>=2.3.1" overturemaps
+
+      - name: 抓取全州三县原始数据（可选）
+        if: ${{ inputs.do_fetch != 'false' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          python bots/delaware_full_dump.py
+          ls -la data/delaware/task004/raw
+
+      - name: 确定原始数据 Release tag
+        id: tag
+        run: |
+          T="${{ inputs.tag }}"
+          if [ -z "$T" ]; then
+            T=$(gh release list -R "${{ github.repository }}" -L 20 --json tagName,createdAt \
+                --jq '[.[]|select(.tagName|startswith("delaware-raw-"))]|sort_by(.createdAt)|last|.tagName')
+          fi
+          echo "tag=$T" >> "$GITHUB_OUTPUT"
+          echo "使用原始数据 tag: $T"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: runner 侧下载原始资产（本机零下载）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p data/delaware/task004/raw
+          gh release download "${{ steps.tag.outputs.tag }}" -R "${{ github.repository }}" \
+            -D data/delaware/task004/raw --clobber
+          ls -la data/delaware/task004/raw | head -40
+          du -sh data/delaware/task004/raw
+
+      - name: 全州三县四源 ETL（scripts/delaware_statewide_coalesce.py）
+        run: |
+          python scripts/delaware_statewide_coalesce.py \
+            --input-dir data/delaware/task004/raw \
+            --out-dir   data/delaware/task004 \
+            --docs-dir  docs
+
+      - name: 结果摘要（供人工复核）
+        if: always()
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          p = pathlib.Path("data/delaware/task004/delaware_funnel.json")
+          if p.exists():
+              f = json.loads(p.read_text(encoding="utf-8"))
+              print("== 全州漏斗 ==")
+              for k in ("scope", "counties", "nad_raw_rows", "overture_raw_features",
+                        "tiger_addrfeat_raw_rows", "s_tier_kept", "a_tier_kept", "golden_total",
+                        "oa_b_tier_orphan_dropped", "overture_b_tier_orphan_dropped"):
+                  print(f"  {k} = {f.get(k)}")
+              print("== 分布 ==")
+              print(json.dumps(f.get("distributions"), ensure_ascii=False)[:1200])
+          else:
+              print("漏斗未生成")
+          PY
+          ls -la data/delaware/task004
+
+      - name: 提交产物到 main
+        if: ${{ always() }}
+        run: |
+          git config user.name  "pi-agent-bot"
+          git config user.email "pi-agent@users.noreply.github.com"
+          for f in data/delaware/task004/*.json data/delaware/task004/*.csv \
+                   data/delaware/task004/*.jsonl docs/delaware_report.md docs/delaware_email_body.txt ; do
+            if [ -f "$f" ]; then git add "$f"; else echo "⚠️ 缺失产物: $f"; fi
+          done
+          if git diff --cached --quiet; then
+            echo "无变更，跳过提交"
+          else
+            git commit -m "feat(task004): Delaware 全州三县四源 ETL → 24 字段黄金地址库（方案一铁律）[run ${{ github.run_id }}]"
+            git pull --rebase --autostash origin main || true
+            git push origin HEAD:main
+          fi
+
+      - name: 交卷 · POST 全文到中继站（author=PI-Agent → worker 自动发信）
+        id: relay
+        if: ${{ inputs.post_relay != 'false' }}
+        run: |
+          python - <<'PY'
+          import json, pathlib, urllib.request
+          p = pathlib.Path("docs/delaware_email_body.txt")
+          if not p.exists():
+              print("无交卷正文，跳过"); raise SystemExit(0)
+          body = p.read_text(encoding="utf-8")
+          payload = json.dumps({"author": "PI-Agent", "content": body}, ensure_ascii=False).encode("utf-8")
+          req = urllib.request.Request(
+              "https://gempi.gtop.dev/api/messages", data=payload,
+              headers={"Content-Type": "application/json; charset=utf-8",
+                       "User-Agent": "Mozilla/5.0 (compatible; pi-task004-bot/1.0)"})
+          with urllib.request.urlopen(req, timeout=90) as resp:
+              print("relay status:", resp.status, resp.read()[:400].decode("utf-8", "replace"))
+          PY
+
+      - name: 交卷 · 中继站失败时 Resend 兜底直投
+        if: ${{ inputs.post_relay != 'false' && steps.relay.outcome == 'failure' }}
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+        run: |
+          python - <<'PY'
+          import json, os, pathlib, urllib.request
+          key = os.environ.get("RESEND_API_KEY") or ""
+          p = pathlib.Path("docs/delaware_email_body.txt")
+          if not key or not p.exists():
+              print("缺少 RESEND_API_KEY 或交卷正文 → 跳过兜底直投")
+              raise SystemExit(0)
+          payload = json.dumps({
+              "from": "bridge@gtop.dev",
+              "to": ["miaoxinxin9701@gmail.com"],
+              "subject": "[PI-BRIDGE · 二号方案] TASK-004 全州三县交卷全文 · 直接看本邮件",
+              "text": p.read_text(encoding="utf-8"),
+          }, ensure_ascii=False).encode("utf-8")
+          req = urllib.request.Request("https://api.resend.com/emails", data=payload, headers={
+              "Authorization": f"Bearer {key}",
+              "Content-Type": "application/json; charset=utf-8",
+              "User-Agent": "pi-bridge/1.0 (+https://gempi.gtop.dev)"})
+          with urllib.request.urlopen(req, timeout=90) as resp:
+              print("resend status:", resp.status, resp.read()[:300].decode("utf-8", "replace"))
+          PY
+
+      - name: 上传产物体
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: delaware-task004-golden-${{ github.run_id }}
+          path: |
+            data/delaware/task004/*.jsonl
+            data/delaware/task004/*.csv
+            data/delaware/task004/*.json
+            docs/delaware_report.md
+            docs/delaware_email_body.txt
+          retention-days: 30

@@ -46,6 +46,29 @@ GRID = 0.001                   # 网格边长（约 85m @ lat39）
 AREA_CODE = "302"
 TIMEZONE = "America/New_York"
 
+# ---------------------------------------------------------------- 作用域配置
+# 同一套引擎跑不同范围：多佛单城 / 全州三县，只要换一份 scope。
+SCOPE_DOVER = {
+    "name": "dover",
+    "out_prefix": "dover",
+    "place_label": "Dover bbox + Kent County（多佛城区及其周边）",
+    "doc_title": "TASK-003 · Dover DE 黄金地址库",
+    "bbox": DEFAULT_BBOX,
+    "state_abbr": "DE", "state_name": "Delaware", "state_fips": "10",
+    "nad": "nad_dover_full.ndjson",
+    "overture": "overture_addresses.geojson",
+    "oa": [("kent", "openaddresses_us_de_kent.zip"),
+           ("city_of_dover", "openaddresses_us_de_city_of_dover.zip")],
+    "counties": [{"name": "Kent County", "fips": "10001",
+                  "addrfeat": "tl_2024_10001_addrfeat.zip", "boundary_key": "county_kent"}],
+    "boundaries": {"place_dover": "tiger_place_dover.geojson",
+                    "county_kent": "tiger_county_kent.geojson",
+                    "state_de": "tiger_state_de.geojson",
+                    "zcta": "tiger_zcta_19901_19904.geojson"},
+    "place_keys": ["place_dover"],
+    "sample_zips": ("19901", "19904"),
+}
+
 # ---------------------------------------------------------------- 归一化词表
 DIRECTION = {
     "N": "North", "S": "South", "E": "East", "W": "West",
@@ -161,9 +184,9 @@ def point_in_rings(lon: float, lat: float, rings: list) -> bool:
 
 
 # ---------------------------------------------------------------- 读取各源
-def load_nad(data: Path) -> list[dict]:
+def load_nad(data: Path, filename: str = "nad_dover_full.ndjson") -> list[dict]:
     rows = []
-    with (data / "nad_dover_full.ndjson").open(encoding="utf-8") as fh:
+    with (data / filename).open(encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
             if line:
@@ -172,8 +195,8 @@ def load_nad(data: Path) -> list[dict]:
     return rows
 
 
-def load_overture(data: Path) -> list[dict]:
-    gj = json.loads((data / "overture_addresses.geojson").read_text(encoding="utf-8"))
+def load_overture(data: Path, filename: str = "overture_addresses.geojson") -> list[dict]:
+    gj = json.loads((data / filename).read_text(encoding="utf-8"))
     rows = []
     for feat in gj.get("features") or []:
         p = feat.get("properties") or {}
@@ -186,11 +209,12 @@ def load_overture(data: Path) -> list[dict]:
     return rows
 
 
-def load_openaddresses(data: Path) -> dict:
-    """返回 {'kent': [...], 'city_of_dover': [...], 统计}"""
+def load_openaddresses(data: Path, sources=None) -> dict:
+    """sources: [(key, 文件名), ...]；默认多佛的两份。"""
+    sources = sources or [("kent", "openaddresses_us_de_kent.zip"),
+                          ("city_of_dover", "openaddresses_us_de_city_of_dover.zip")]
     out, stats = {}, {}
-    for src, name in (("kent", "openaddresses_us_de_kent.zip"),
-                      ("city_of_dover", "openaddresses_us_de_city_of_dover.zip")):
+    for src, name in sources:
         zf = zipfile.ZipFile(data / name)
         member = next(n for n in zf.namelist() if n.endswith(".csv"))
         rows = []
@@ -202,13 +226,27 @@ def load_openaddresses(data: Path) -> dict:
                              "hash": rec.get("HASH"), "src": src})
         out[src] = rows
         stats[src] = len(rows)
-    log(f"OpenAddresses 载入 kent={stats['kent']:,} city_of_dover={stats['city_of_dover']:,}")
+    log("OpenAddresses 载入 " + ", ".join(f"{k}={v:,}" for k, v in stats.items()))
     return {"rows": out, "stats": stats}
 
 
-def load_tiger_segments(data: Path) -> list[dict]:
-    """解析 addrfeat dbf + shp：每段路给左右两套（起止号段/奇偶/邮编）+ 首末坐标。"""
-    zf = zipfile.ZipFile(data / "tl_2024_10001_addrfeat.zip")
+def load_tiger_segments(data: Path, filenames=None) -> list[dict]:
+    """解析 addrfeat dbf + shp：每段路给左右两套（起止号段/奇偶/邮编）+ 首末坐标。
+
+    filenames 支持多个县（全州三县）合并：tl_2024_{10001,10003,10005}_addrfeat.zip。
+    返回增带 county_fips 字段，便于回写每段的县归属。
+    """
+    filenames = filenames or ["tl_2024_10001_addrfeat.zip"]
+    all_segs: list[dict] = []
+    for filename in filenames:
+        fips = (re.search(r"_(\d{5})_", filename) or [None, ""])[1] if "_" in filename else ""
+        all_segs.extend(_load_one_addrfeat(Path(data) / filename, fips))
+    log(f"TIGER 号段共载入 {len(all_segs):,} 段（{len(filenames)} 个县文件）")
+    return all_segs
+
+
+def _load_one_addrfeat(path: Path, county_fips: str = "") -> list[dict]:
+    zf = zipfile.ZipFile(path)
     names = zf.namelist()
     dbf = zf.read(next(n for n in names if n.endswith(".dbf")))
     shp = zf.read(next(n for n in names if n.endswith(".shp")))
@@ -262,8 +300,9 @@ def load_tiger_segments(data: Path) -> list[dict]:
         out.append({"tlid": r.get("TLID"), "fullname": r.get("FULLNAME"),
                     "street_key": norm_street(r.get("FULLNAME")), "sides": sides,
                     "x0": x0, "y0": y0, "x1": x1, "y1": y1, "npts": npts,
+                    "county_fips": county_fips,
                     "mtfcc": r.get("EDGE_MTFCC"), "zip_l": r.get("ZIPL"), "zip_r": r.get("ZIPR")})
-    log(f"TIGER 号段载入 {len(out):,} 段（原始记录 {len(recs):,}）")
+    log(f"  · {path.name}: 段 {len(out):,}（原始记录 {len(recs):,}）")
     return out
 
 
@@ -272,13 +311,19 @@ def _as_int(v):
     return int(s) if s.isdigit() else None
 
 
-def load_boundaries(data: Path) -> dict:
+def load_boundaries(data: Path, spec=None) -> dict:
+    """spec: {key: 文件名}；key 约定 place / state / zcta / county_<fips>。"""
+    spec = spec or {"place_dover": "tiger_place_dover.geojson",
+                    "county_kent": "tiger_county_kent.geojson",
+                    "state_de": "tiger_state_de.geojson",
+                    "zcta": "tiger_zcta_19901_19904.geojson"}
     out = {}
-    for key, name in (("place_dover", "tiger_place_dover.geojson"),
-                      ("county_kent", "tiger_county_kent.geojson"),
-                      ("state_de", "tiger_state_de.geojson"),
-                      ("zcta", "tiger_zcta_19901_19904.geojson")):
-        gj = json.loads((data / name).read_text(encoding="utf-8"))
+    for key, name in spec.items():
+        path = data / name
+        if not path.exists():
+            log(f"⚠️ 缺边界文件 {name}，已跳过")
+            continue
+        gj = json.loads(path.read_text(encoding="utf-8"))
         out[key] = [{"attrs": f.get("attributes") or {}, "rings": (f.get("geometry") or {}).get("rings") or []}
                     for f in gj.get("features") or []]
     log("边界图层载入：" + ", ".join(f"{k}={len(v)}" for k, v in out.items()))
@@ -350,17 +395,19 @@ def tiger_check(seg_index: dict, seg_grid: dict, number: str, street_key: str,
 
 
 # ---------------------------------------------------------------- 主流程
-def run(data: Path, out: Path, bbox=(-75.60, 39.10, -75.45, 39.22),
-        docs_dir: Path | None = None) -> dict:
+def run(data: Path, out: Path, bbox=None, docs_dir: Path | None = None,
+        scope: dict | None = None) -> dict:
+    scope = scope or SCOPE_DOVER
+    bbox = tuple(bbox or scope["bbox"])
     t0 = time.time()
     W, S, E, N = bbox
     out.mkdir(parents=True, exist_ok=True)
 
-    nad = load_nad(data)
-    over = load_overture(data)
-    oa = load_openaddresses(data)
-    segs = load_tiger_segments(data)
-    bnd = load_boundaries(data)
+    nad = load_nad(data, scope["nad"])
+    over = load_overture(data, scope["overture"])
+    oa = load_openaddresses(data, scope["oa"])
+    segs = load_tiger_segments(data, [c["addrfeat"] for c in scope["counties"]])
+    bnd = load_boundaries(data, scope["boundaries"])
 
     funnel = {}
     funnel["nad_raw"] = len(nad)
@@ -431,9 +478,12 @@ def run(data: Path, out: Path, bbox=(-75.60, 39.10, -75.45, 39.22),
     seg_grid = segment_grid(segs)
 
     # ---- 城市/县/州 多边形 ----
-    dover_rings = bnd["place_dover"][0]["rings"] if bnd["place_dover"] else []
-    kent_rings = bnd["county_kent"][0]["rings"] if bnd["county_kent"] else []
-    de_rings = bnd["state_de"][0]["rings"] if bnd["state_de"] else []
+    place_rings = []
+    for pk in scope["place_keys"]:
+        place_rings.extend((bnd.get(pk) or [{}])[0].get("rings") or [])
+    counties = [(c["name"], c["fips"], (bnd.get(c["boundary_key"]) or [{}])[0].get("rings") or [])
+                for c in scope["counties"]]
+    de_rings = (bnd.get("state_de") or [{}])[0].get("rings") or []
 
     golden, tiers, drop, tiger_fail = [], Counter(), Counter(), Counter()
     src_map: dict = {}      # id(rec) → 该地址命中的其他三源原始记录（供 5 组四源对照）
@@ -450,15 +500,17 @@ def run(data: Path, out: Path, bbox=(-75.60, 39.10, -75.45, 39.22),
             continue
         # ⚠️ 修正：A 级的判据是「在 TIGER 行政边界内」，不是「号段命中」
         #    号段命中只决定 S 级（额外拿到 OA 独立票）；边界内的 NAD 记录不得因号段未命中而丢弃
-        in_kent = point_in_rings(lon, lat, kent_rings) if kent_rings else (W <= lon <= E and S <= lat <= N)
-        if not in_kent:
-            drop["nad_outside_kent_boundary"] += 1
+        in_county = next(((cn, cf) for cn, cf, rings in counties if rings and point_in_rings(lon, lat, rings)),
+                         None)
+        if (counties and any(r for _n, _f, r in counties)) and not in_county:
+            drop["nad_outside_county_boundary"] += 1
             continue
+        cname, cfips = in_county or (scope["counties"][0]["name"], scope["counties"][0]["fips"])
         key = (num, street_key, unit_n)
         tg = tiger_check(seg_index, seg_grid, num, street_key, lon, lat)
         if not tg.get("ok"):
             tiger_fail[str(tg.get("why"))] += 1
-        in_dover_poly = point_in_rings(lon, lat, dover_rings) if dover_rings else None
+        in_dover_poly = point_in_rings(lon, lat, place_rings) if place_rings else None
         oa_hit = oa_index.get(key)
         ov_hit = over_index.get(key)
         if tg.get("ok") and oa_hit:
@@ -505,8 +557,8 @@ def run(data: Path, out: Path, bbox=(-75.60, 39.10, -75.45, 39.22),
                                                    (r.get("LandmkName") or "").strip()) if x) or None,
             "postal_city": city_postal or None,
             "municipal_city": municipal or None,
-            "county_name": "Kent County",
-            "county_fips": "10001",
+            "county_name": cname,
+            "county_fips": cfips,
             "state_abbr": "DE",
             "state_name": "Delaware",
             "state_fips": "10",
@@ -538,7 +590,7 @@ def run(data: Path, out: Path, bbox=(-75.60, 39.10, -75.45, 39.22),
             return False
         if not (W <= lon <= E and S <= lat <= N):
             return False
-        return point_in_rings(lon, lat, dover_rings) if dover_rings else True
+        return point_in_rings(lon, lat, place_rings) if place_rings else True
 
     nad_keys = {(parse_number(r.get("Add_Number")),
                  norm_street(r.get("StNam_Full") or f"{r.get('St_Name','')} {r.get('St_PosTyp','')}"),
@@ -592,7 +644,7 @@ def run(data: Path, out: Path, bbox=(-75.60, 39.10, -75.45, 39.22),
     tiers["final_golden"] = len(dedup)
 
     # ---- 输出 ----
-    with (out / "dover_golden_addresses.jsonl").open("w", encoding="utf-8") as fh:
+    with (out / f"{scope.get('out_prefix', 'dover')}_golden_addresses.jsonl").open("w", encoding="utf-8") as fh:
         for rec in dedup:
             fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
     fill_fields = list(dedup[0].keys()) if dedup else []
@@ -607,7 +659,8 @@ def run(data: Path, out: Path, bbox=(-75.60, 39.10, -75.45, 39.22),
         w = csv.DictWriter(fh, fieldnames=["field", "non_null", "total", "fill_rate"])
         w.writeheader()
         w.writerows(fill)
-    sample = [r for r in dedup if r.get("zip5") in ("19901", "19904")][:50]
+    sample_zips = scope.get("sample_zips") or ()
+    sample = [r for r in dedup if not sample_zips or r.get("zip5") in sample_zips][:50]
     with (out / "golden_sample_50.csv").open("w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=[f for f in fill_fields if f not in ("tiger",)],
                            extrasaction="ignore")
@@ -629,7 +682,7 @@ def run(data: Path, out: Path, bbox=(-75.60, 39.10, -75.45, 39.22),
                "tiger_fail_reasons": dict(tiger_fail),
                "golden_total": len(dedup), "elapsed_sec": round(time.time() - t0, 2)}
     (out / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=1), encoding="utf-8")
-    write_delivery_outputs(out, docs_dir, summary, fill, dedup, src_map, bbox)
+    write_delivery_outputs(out, docs_dir, summary, fill, dedup, src_map, bbox, scope)
     log("完成：" + json.dumps(summary, ensure_ascii=False)[:1200])
     return summary
 
@@ -664,13 +717,16 @@ def _pick_comparison_addresses(dedup: list[dict], n: int = 5) -> list[dict]:
 
 
 def write_delivery_outputs(out: Path, docs_dir: Path | None, summary: dict, fill: list[dict],
-                           dedup: list[dict], src_map: dict, bbox) -> None:
+                           dedup: list[dict], src_map: dict, bbox, scope: dict | None = None) -> None:
+    scope = scope or SCOPE_DOVER
+    prefix = scope["out_prefix"]
+    place_label = scope.get("place_label") or scope["name"]
     funnel, tiers, drop = summary["funnel"], summary["tiers"], summary["dropped"]
     total = len(dedup)
 
     # 1) 黄金地址 CSV（24 字段 + 可追溯列）
     cols = DELIVERY_FIELDS + ["tiger_status", "uuid"]
-    with (out / "dover_golden_addresses.csv").open("w", newline="", encoding="utf-8") as fh:
+    with (out / f"{prefix}_golden_addresses.csv").open("w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=cols, extrasaction="ignore")
         w.writeheader()
         for r in dedup:
@@ -680,6 +736,8 @@ def write_delivery_outputs(out: Path, docs_dir: Path | None, summary: dict, fill
     funnel_out = {
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "engine": "local-high-quality v2（方案一铁律：独立源计票 + TIGER 距离约束 + 四栏漏斗）",
+        "scope": scope["name"],
+        "counties": [c["name"] for c in scope["counties"]],
         "bbox": list(bbox), "tiger_crs": "NAD83",
         "nad_raw_rows": funnel["nad_raw"],
         "overture_raw_features": funnel["overture_raw"],
@@ -710,14 +768,14 @@ def write_delivery_outputs(out: Path, docs_dir: Path | None, summary: dict, fill
             "unit_non_null": sum(1 for r in dedup if r.get("unit")),
         },
         "outputs": {
-            "jsonl": "dover_golden_addresses.jsonl", "csv": "dover_golden_addresses.csv",
+            "jsonl": f"{prefix}_golden_addresses.jsonl", "csv": f"{prefix}_golden_addresses.csv",
             "sample50": "golden_sample_50.csv", "fillrate": "golden_fillrate_24fields.csv",
             "comparisons": "five_address_4source_comparisons.json",
         },
     }
-    (out / "dover_funnel.json").write_text(
+    (out / f"{prefix}_funnel.json").write_text(
         json.dumps(funnel_out, ensure_ascii=False, indent=1), encoding="utf-8")
-    (out / "dover_task003_summary.json").write_text(
+    (out / f"{prefix}_task_summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=1), encoding="utf-8")
 
     # 3) 5 组同址四源对照
@@ -741,9 +799,10 @@ def write_delivery_outputs(out: Path, docs_dir: Path | None, summary: dict, fill
     a_tier = total - s_tier
     full100 = [f["field"] for f in fill if f["non_null"] == total]
     lines = [
-        "# TASK-003 · Dover DE 黄金地址库（方案一铁律版）",
+        f"# {scope.get('doc_title', 'TASK-003 · Dover DE 黄金地址库')}（方案一铁律版）",
         "",
         f"生成：{funnel_out['generated_at']}",
+        f"范围：{place_label} | 县：{', '.join(c['name'] for c in scope['counties'])}",
         "",
         "## 口径（方案一 · 全项目铁律）",
         "",
@@ -769,10 +828,10 @@ def write_delivery_outputs(out: Path, docs_dir: Path | None, summary: dict, fill
         "|---|---|---|---|",
     ]
     lines += [f"| {f['field']} | {f['non_null']:,} | {f['total']:,} | {f['fill_rate']}% |" for f in fill]
-    (docs_dir / "task003_report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (docs_dir / f"{prefix}_report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     body = [
-        "【PI-BRIDGE · 二号方案】TASK-003 重跑交卷（方案一铁律版）",
+        f"【PI-BRIDGE · 二号方案】{scope.get('doc_title', 'TASK-003')} 重跑交卷（方案一铁律版）",
         "=" * 72,
         "",
         "已按裁定结果全面废除云端 runner 的宽松口径，改采本地方案一铁律重跑：",
@@ -792,7 +851,7 @@ def write_delivery_outputs(out: Path, docs_dir: Path | None, summary: dict, fill
         "",
         "—— PI（本机独立复算引擎 v2）",
     ]
-    (docs_dir / "task003_email_body.txt").write_text("\n".join(body) + "\n", encoding="utf-8")
+    (docs_dir / f"{prefix}_email_body.txt").write_text("\n".join(body) + "\n", encoding="utf-8")
 
 
 def main(argv=None) -> int:

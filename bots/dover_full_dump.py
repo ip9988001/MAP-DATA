@@ -180,25 +180,27 @@ def harvest_openaddresses() -> list[Path]:
 
 
 # ---------------------------------------------------------------- D. Census TIGER（原始小包 + 边界图层）
+TIGER_BASE = "https://www2.census.gov/geo/tiger/TIGER2024"
 TIGER_QUERIES = [
     ("zcta_19901_19904", df.TIGER_ZCTA,
-     [f"ZCTA5='{df.ZIP_MAIN}' OR ZCTA5='{df.ZIP_ALT}'"], "ZCTA5,GEOID"),
+     [(f"ZCTA5='{df.ZIP_MAIN}' OR ZCTA5='{df.ZIP_ALT}'", "ZCTA5,GEOID")]),
     ("place_dover", df.TIGER_PLACES,
-     [f"STATE='{df.STATE_FIPS}' AND BASENAME='{df.CITY}'"],
-     "GEOID,NAME,BASENAME,STATE,PLACE,CENTLAT,CENTLON"),
+     [(f"STATE='{df.STATE_FIPS}' AND BASENAME='{df.CITY}'",
+       "GEOID,NAME,BASENAME,STATE,PLACE,CENTLAT,CENTLON")]),
     ("county_kent", df.TIGER_COUNTY,
-     [f"STATE='{df.STATE_FIPS}' AND COUNTY='{df.COUNTY_FIPS}'",
-      f"STATEFP='{df.STATE_FIPS}' AND COUNTYFP='{df.COUNTY_FIPS}'"],
-     "GEOID,BASENAME,STATE,COUNTY,NAME"),
+     [(f"STATE='{df.STATE_FIPS}' AND COUNTY='{df.COUNTY_FIPS}'", "GEOID,BASENAME,STATE,COUNTY,NAME"),
+      (f"STATEFP='{df.STATE_FIPS}' AND COUNTYFP='{df.COUNTY_FIPS}'", "GEOID,BASENAME,STATEFP,COUNTYFP,NAME")]),
+    # ⚠️ State 图层没有 BASENAME 字段 → 之前 outFields 带 BASENAME 直接被 400 掉（记住：先看图层元数据再写字段）
     ("state_de", df.TIGER_STATE,
-     [f"STATE='{df.STATE_FIPS}'", f"STATEFP='{df.STATE_FIPS}'", f"STUSPS='{df.STATE}'"],
-     "GEOID,STUSPS,NAME,BASENAME"),
+     [(f"STATEFP='{df.STATE_FIPS}'", "GEOID,STATEFP,STUSPS,NAME"),
+      (f"STUSPS='{df.STATE}'", "GEOID,STATEFP,STUSPS,NAME"),
+      (f"STATE='{df.STATE_FIPS}'", "GEOID,STATE,STUSPS,NAME")]),
 ]
 TIGER_FILES = [
-    ("tl_2024_10001_addrfeat.zip", "https://www2.census.gov/geo/tiger/TIGER2024/ADDRFEAT/tl_2024_10001_addrfeat.zip"),
-    ("tl_2024_10_place.zip", "https://www2.census.gov/geo/tiger/TIGER2024/PLACE/tl_2024_10_place.zip"),
+    ("tl_2024_10001_addrfeat.zip", f"{TIGER_BASE}/ADDRFEAT/tl_2024_10001_addrfeat.zip"),
+    ("tl_2024_10_place.zip", f"{TIGER_BASE}/PLACE/tl_2024_10_place.zip"),
+    ("tl_2024_10_addrfeat.zip", f"{TIGER_BASE}/ADDRFEAT/tl_2024_10_addrfeat.zip"),
 ]
-TIGER_BASE = "https://www2.census.gov/geo/tiger/TIGER2024"
 
 
 def harvest_tiger() -> list[Path]:
@@ -206,9 +208,9 @@ def harvest_tiger() -> list[Path]:
     d.mkdir(parents=True, exist_ok=True)
     files: list[Path] = []
     detail = []
-    for key, layer, wheres, fields in TIGER_QUERIES:
+    for key, layer, attempts in TIGER_QUERIES:
         got = None
-        for where in wheres:
+        for where, fields in attempts:
             try:
                 payload = df.http_json(f"{layer}/query", {
                     "where": where, "outFields": fields, "returnGeometry": "true",
@@ -216,11 +218,13 @@ def harvest_tiger() -> list[Path]:
                 if not payload.get("error"):
                     got = (where, payload)
                     break
+                detail.append({"key": key, "layer": layer, "where": where,
+                               "esri_error": str(payload["error"])[:160]})
             except Exception as exc:  # noqa: BLE001
                 detail.append({"key": key, "layer": layer, "where": where, "error": str(exc)[:150]})
         if not got:
-            detail.append({"key": key, "layer": layer, "status": "all_where_clauses_failed",
-                           "tried": wheres})
+            detail.append({"key": key, "layer": layer, "status": "all_attempts_failed",
+                           "tried": [w for w, _ in attempts]})
             continue
         where, payload = got
         path = d / f"tiger_{key}.geojson"

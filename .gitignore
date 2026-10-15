@@ -1,0 +1,5 @@
+# TASK-003 流水线：runner 侧下载的原始 Release 资产不进 git（本地产物另有 data/dover/task003/*.jsonl|csv 入库）
+data/dover/task003/raw/
+data/dover/full/
+*.pyc
+__pycache__/

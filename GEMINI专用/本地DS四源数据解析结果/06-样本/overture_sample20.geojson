@@ -1,0 +1,829 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "id": "aab767eb-5a80-405c-85e8-e92f39d11b4b",
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -75.56340680224665,
+          39.10176111483698
+        ]
+      },
+      "properties": {
+        "street": "WILLOW GROVE Road",
+        "number": "11540",
+        "unit": "STE B",
+        "postcode": "19934",
+        "postal_city": "Camden Wyoming",
+        "address_levels": [
+          {
+            "value": "DE"
+          },
+          {
+            "value": "Camden Wyoming"
+          }
+        ],
+        "country": "US",
+        "sources": [
+          {
+            "property": "",
+            "dataset": "NAD",
+            "license": "LicenseRef-Public-Domain-US",
+            "record_id": "0F3629D8-FD1E-4108-89A3-7E177819182F",
+            "update_time": "2026-09-18T19:39:08.275Z",
+            "confidence": null,
+            "between": null,
+            "provider": "nad",
+            "resource": "nad",
+            "version": "20250924"
+          }
+        ],
+        "version": 1
+      }
+    },
+    {
+      "id": "1f62ef75-9055-486b-87bb-fa56d56287b9",
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -75.56340680224665,
+          39.10176111483698
+        ]
+      },
+      "properties": {
+        "street": "WILLOW GROVE Road",
+        "number": "11540",
+        "unit": "STE A",
+        "postcode": "19934",
+        "postal_city": "Camden Wyoming",
+        "address_levels": [
+          {
+            "value": "DE"
+          },
+          {
+            "value": "Camden Wyoming"
+          }
+        ],
+        "country": "US",
+        "sources": [
+          {
+            "property": "",
+            "dataset": "NAD",
+            "license": "LicenseRef-Public-Domain-US",
+            "record_id": "3A759C97-CEC7-4167-A80F-80814C519A61",
+            "update_time": "2026-09-18T19:39:08.275Z",
+            "confidence": null,
+            "between": null,
+            "provider": "nad",
+            "resource": "nad",
+            "version": "20250924"
+          }
+        ],
+        "version": 1
+      }
+    },
+    {
+      "id": "0bdc4325-89b7-4c95-ae7c-c521f8bceb46",
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -75.56379288715878,
+          39.102142298897576
+        ]
+      },
+      "properties": {
+        "street": "WILLOW GROVE Road",
+        "number": "11550",
+        "unit": "STE C",
+        "postcode": "19934",
+        "postal_city": "Camden Wyoming",
+        "address_levels": [
+          {
+            "value": "DE"
+          },
+          {
+            "value": "Camden Wyoming"
+          }
+        ],
+        "country": "US",
+        "sources": [
+          {
+            "property": "",
+            "dataset": "NAD",
+            "license": "LicenseRef-Public-Domain-US",
+            "record_id": "B8A30598-4AAE-4CEF-B77C-5017276BC853",
+            "update_time": "2026-09-18T19:39:08.275Z",
+            "confidence": null,
+            "between": null,
+            "provider": "nad",
+            "resource": "nad",
+            "version": "20250924"
+          }
+        ],
+        "version": 1
+      }
+    },
+    {
+      "id": "6a3d3c62-40f1-4a73-bdea-a6858da06f9d",
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -75.56379288715878,
+          39.102142298897576
+        ]
+      },
+      "properties": {
+        "street": "WILLOW GROVE Road",
+        "number": "11550",
+        "unit": "STE A",
+        "postcode": "19934",
+        "postal_city": "Camden Wyoming",
+        "address_levels": [
+          {
+            "value": "DE"
+          },
+          {
+            "value": "Camden Wyoming"
+          }
+        ],
+        "country": "US",
+        "sources": [
+          {
+            "property": "",
+            "dataset": "NAD",
+            "license": "LicenseRef-Public-Domain-US",
+            "record_id": "A13E0B3A-33AA-4F68-8AB3-8C9A03F60A69",
+            "update_time": "2026-09-18T19:39:08.275Z",
+            "confidence": null,
+            "between": null,
+            "provider": "nad",
+            "resource": "nad",
+            "version": "20250924"
+          }
+        ],
+        "version": 1
+      }
+    },
+    {
+      "id": "c49da447-16d7-45d6-8a0b-0bcb840c7da4",
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -75.5685272936402,
+          39.155028969085926
+        ]
+      },
+      "properties": {
+        "street": "NORTHDOWN Drive",
+        "number": "401",
+        "postcode": "19901",
+        "postal_city": "Dover",
+        "address_levels": [
+          {
+            "value": "DE"
+          },
+          {
+            "value": "Dover"
+          }
+        ],
+        "country": "US",
+        "sources": [
+          {
+            "property": "",
+            "dataset": "NAD",
+            "license": "LicenseRef-Public-Domain-US",
+            "record_id": "4554690D-FB1E-41B6-AC36-39A8807831CE",
+            "update_time": "2026-09-18T19:39:08.275Z",
+            "confidence": null,
+            "between": null,
+            "provider": "nad",
+            "resource": "nad",
+            "version": "20250924"
+          }
+        ],
+        "version": 1
+      }
+    },
+    {
+      "id": "a14e78a9-7bc0-4261-bf6f-f6d96465ef92",
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -75.53375540592754,
+          39.11887231262968
+        ]
+      },
+      "properties": {
+        "street": "SHAMROCK Avenue",
+        "number": "33",
+        "postcode": "19901",
+        "postal_city": "Dover",
+        "address_levels": [
+          {
+            "value": "DE"
+          },
+          {
+            "value": "Dover"
+          }
+        ],
+        "country": "US",
+        "sources": [
+          {
+            "property": "",
+            "dataset": "NAD",
+            "license": "LicenseRef-Public-Domain-US",
+            "record_id": "F7731863-42B9-4F3A-A2D6-2E7DE5C88524",
+            "update_time": "2026-09-18T19:39:08.275Z",
+            "confidence": null,
+            "between": null,
+            "provider": "nad",
+            "resource": "nad",
+            "version": "20250924"
+          }
+        ],
+        "version": 1
+      }
+    },
+    {
+      "id": "380856d2-2c5e-4afd-ab9c-18e058697ca1",
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -75.53366577457234,
+          39.11885066545406
+        ]
+      },
+      "properties": {
+        "street": "SHAMROCK Avenue",
+        "number": "39",
+        "postcode": "19901",
+        "postal_city": "Dover",
+        "address_levels": [
+          {
+            "value": "DE"
+          },
+          {
+            "value": "Dover"
+          }
+        ],
+        "country": "US",
+        "sources": [
+          {
+            "property": "",
+            "dataset": "NAD",
+            "license": "LicenseRef-Public-Domain-US",
+            "record_id": "8FC66FE0-1B8F-45A3-B830-0521A7DD4329",
+            "update_time": "2026-09-18T19:39:08.275Z",
+            "confidence": null,
+            "between": null,
+            "provider": "nad",
+            "resource": "nad",
+            "version": "20250924"
+          }
+        ],
+        "version": 1
+      }
+    },
+    {
+      "id": "0f7e191f-373e-44fb-a4d8-a2356cf8cddf",
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -75.59970965541088,
+          39.130476211947084
+        ]
+      },
+      "properties": {
+        "street": "SCARLET Circle",
+        "number": "399",
+        "postcode": "19904",
+        "postal_city": "Dover",
+        "address_levels": [
+          {
+            "value": "DE"
+          },
+          {
+            "value": "Dover"
+          }
+        ],
+        "country": "US",
+        "sources": [
+          {
+            "property": "",
+            "dataset": "NAD",
+            "license": "LicenseRef-Public-Domain-US",
+            "record_id": "4DC27EAD-6E5F-4C2B-BDE1-8A28F2B8DE14",
+            "update_time": "2026-09-18T19:39:08.275Z",
+            "confidence": null,
+            "between": null,
+            "provider": "nad",
+            "resource": "nad",
+            "version": "20250924"
+          }
+        ],
+        "version": 1
+      }
+    },
+    {
+      "id": "634d0e58-fd32-4a17-b5e3-47dca26ae25a",
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -75.5999802539291,
+          39.131080535417304
+        ]
+      },
+      "properties": {
+        "street": "SONGBIRD Lane",
+        "number": "112",
+        "postcode": "19904",
+        "postal_city": "Dover",
+        "address_levels": [
+          {
+            "value": "DE"
+          },
+          {
+            "value": "Dover"
+          }
+        ],
+        "country": "US",
+        "sources": [
+          {
+            "property": "",
+            "dataset": "NAD",
+            "license": "LicenseRef-Public-Domain-US",
+            "record_id": "1243360C-CF98-49AD-B1E6-2BA4EA231840",
+            "update_time": "2026-09-18T19:39:08.275Z",
+            "confidence": null,
+            "between": null,
+            "provider": "nad",
+            "resource": "nad",
+            "version": "20250924"
+          }
+        ],
+        "version": 1
+      }
+    },
+    {
+      "id": "f1f27717-912b-4338-b98e-7bea3713d558",
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -75.59930299495238,
+          39.130691152045756
+        ]
+      },
+      "properties": {
+        "street": "CARDINAL HILLS Parkway",
+        "number": "312",
+        "postcode": "19904",
+        "postal_city": "Dover",
+        "address_levels": [
+          {
+            "value": "DE"
+          },
+          {
+            "value": "Dover"
+          }
+        ],
+        "country": "US",
+        "sources": [
+          {
+            "property": "",
+            "dataset": "NAD",
+            "license": "LicenseRef-Public-Domain-US",
+            "record_id": "7427166F-4F0E-43F2-B9F6-0E655E89C0B6",
+            "update_time": "2026-09-18T19:39:08.275Z",
+            "confidence": null,
+            "between": null,
+            "provider": "nad",
+            "resource": "nad",
+            "version": "20250924"
+          }
+        ],
+        "version": 1
+      }
+    },
+    {
+      "id": "0dd867b2-4f90-4d29-9d43-d08bba9eb9c1",
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -75.5843265232578,
+          39.100539161446044
+        ]
+      },
+      "properties": {
+        "street": "MOOSE LODGE Road",
+        "number": "455",
+        "postcode": "19934",
+        "postal_city": "Camden Wyoming",
+        "address_levels": [
+          {
+            "value": "DE"
+          },
+          {
+            "value": "Camden Wyoming"
+          }
+        ],
+        "country": "US",
+        "sources": [
+          {
+            "property": "",
+            "dataset": "NAD",
+            "license": "LicenseRef-Public-Domain-US",
+            "record_id": "61427C58-F858-44A1-8FA0-B077E12AA530",
+            "update_time": "2026-09-18T19:39:08.275Z",
+            "confidence": null,
+            "between": null,
+            "provider": "nad",
+            "resource": "nad",
+            "version": "20250924"
+          }
+        ],
+        "version": 1
+      }
+    },
+    {
+      "id": "6384c3b3-d38c-4398-a8f5-0a49d5a60eb2",
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -75.5863637630371,
+          39.10052021917413
+        ]
+      },
+      "properties": {
+        "street": "MOOSE LODGE Road",
+        "number": "591",
+        "postcode": "19934",
+        "postal_city": "Camden Wyoming",
+        "address_levels": [
+          {
+            "value": "DE"
+          },
+          {
+            "value": "Camden Wyoming"
+          }
+        ],
+        "country": "US",
+        "sources": [
+          {
+            "property": "",
+            "dataset": "NAD",
+            "license": "LicenseRef-Public-Domain-US",
+            "record_id": "9D2B4F54-A70B-4B13-9304-03458F780DD5",
+            "update_time": "2026-09-18T19:39:08.275Z",
+            "confidence": null,
+            "between": null,
+            "provider": "nad",
+            "resource": "nad",
+            "version": "20250924"
+          }
+        ],
+        "version": 1
+      }
+    },
+    {
+      "id": "bd68dd27-130a-4454-b37f-f8a625ac5bd1",
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -75.58883086229955,
+          39.10101358134956
+        ]
+      },
+      "properties": {
+        "street": "MOOSE LODGE Road",
+        "number": "643",
+        "postcode": "19934",
+        "postal_city": "Camden Wyoming",
+        "address_levels": [
+          {
+            "value": "DE"
+          },
+          {
+            "value": "Camden Wyoming"
+          }
+        ],
+        "country": "US",
+        "sources": [
+          {
+            "property": "",
+            "dataset": "NAD",
+            "license": "LicenseRef-Public-Domain-US",
+            "record_id": "45919889-85C2-4C94-BDAD-6E4A3A184C80",
+            "update_time": "2026-09-18T19:39:08.275Z",
+            "confidence": null,
+            "between": null,
+            "provider": "nad",
+            "resource": "nad",
+            "version": "20250924"
+          }
+        ],
+        "version": 1
+      }
+    },
+    {
+      "id": "7825fa90-7bbc-4dc2-8666-5d548facc661",
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -75.59109036870981,
+          39.10448637341052
+        ]
+      },
+      "properties": {
+        "street": "MOOSE LODGE Road",
+        "number": "657",
+        "postcode": "19934",
+        "postal_city": "Camden Wyoming",
+        "address_levels": [
+          {
+            "value": "DE"
+          },
+          {
+            "value": "Camden Wyoming"
+          }
+        ],
+        "country": "US",
+        "sources": [
+          {
+            "property": "",
+            "dataset": "NAD",
+            "license": "LicenseRef-Public-Domain-US",
+            "record_id": "C172E5D0-918C-444E-8F9E-B534FAB31081",
+            "update_time": "2026-09-18T19:39:08.275Z",
+            "confidence": null,
+            "between": null,
+            "provider": "nad",
+            "resource": "nad",
+            "version": "20250924"
+          }
+        ],
+        "version": 1
+      }
+    },
+    {
+      "id": "7d5ecf48-49bf-48cd-9b10-d63669c1f4b3",
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -75.58283847947078,
+          39.10187464517025
+        ]
+      },
+      "properties": {
+        "street": "NEO Circle",
+        "number": "25",
+        "postcode": "19934",
+        "postal_city": "Camden Wyoming",
+        "address_levels": [
+          {
+            "value": "DE"
+          },
+          {
+            "value": "Camden Wyoming"
+          }
+        ],
+        "country": "US",
+        "sources": [
+          {
+            "property": "",
+            "dataset": "NAD",
+            "license": "LicenseRef-Public-Domain-US",
+            "record_id": "A7E20386-ECE5-4498-934D-18165A1D2335",
+            "update_time": "2026-09-18T19:39:08.275Z",
+            "confidence": null,
+            "between": null,
+            "provider": "nad",
+            "resource": "nad",
+            "version": "20250924"
+          }
+        ],
+        "version": 1
+      }
+    },
+    {
+      "id": "5e578961-610a-414a-9957-6cef5da81bdd",
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -75.58353115914579,
+          39.10216273963741
+        ]
+      },
+      "properties": {
+        "street": "MOOSE LODGE Road",
+        "number": "597",
+        "postcode": "19934",
+        "postal_city": "Camden Wyoming",
+        "address_levels": [
+          {
+            "value": "DE"
+          },
+          {
+            "value": "Camden Wyoming"
+          }
+        ],
+        "country": "US",
+        "sources": [
+          {
+            "property": "",
+            "dataset": "NAD",
+            "license": "LicenseRef-Public-Domain-US",
+            "record_id": "B4190A35-DB0A-44B1-A58D-B5C658F95BEC",
+            "update_time": "2026-09-18T19:39:08.275Z",
+            "confidence": null,
+            "between": null,
+            "provider": "nad",
+            "resource": "nad",
+            "version": "20250924"
+          }
+        ],
+        "version": 1
+      }
+    },
+    {
+      "id": "61456884-dc40-48cb-98ec-a0eb5420e495",
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -75.58188484699689,
+          39.10252195858388
+        ]
+      },
+      "properties": {
+        "street": "MOOSE LODGE Road",
+        "number": "603",
+        "postcode": "19934",
+        "postal_city": "Camden Wyoming",
+        "address_levels": [
+          {
+            "value": "DE"
+          },
+          {
+            "value": "Camden Wyoming"
+          }
+        ],
+        "country": "US",
+        "sources": [
+          {
+            "property": "",
+            "dataset": "NAD",
+            "license": "LicenseRef-Public-Domain-US",
+            "record_id": "DAEE1C3D-0F33-4E8D-8E98-C329A64D2A8E",
+            "update_time": "2026-09-18T19:39:08.275Z",
+            "confidence": null,
+            "between": null,
+            "provider": "nad",
+            "resource": "nad",
+            "version": "20250924"
+          }
+        ],
+        "version": 1
+      }
+    },
+    {
+      "id": "c1c84d59-fb63-4981-aaad-04366fef3c27",
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -75.58207921138221,
+          39.101986657484005
+        ]
+      },
+      "properties": {
+        "street": "MOOSE LODGE Road",
+        "number": "561",
+        "postcode": "19934",
+        "postal_city": "Camden Wyoming",
+        "address_levels": [
+          {
+            "value": "DE"
+          },
+          {
+            "value": "Camden Wyoming"
+          }
+        ],
+        "country": "US",
+        "sources": [
+          {
+            "property": "",
+            "dataset": "NAD",
+            "license": "LicenseRef-Public-Domain-US",
+            "record_id": "8C31D63D-8D1F-400A-BB21-D9207EFC0186",
+            "update_time": "2026-09-18T19:39:08.275Z",
+            "confidence": null,
+            "between": null,
+            "provider": "nad",
+            "resource": "nad",
+            "version": "20250924"
+          }
+        ],
+        "version": 1
+      }
+    },
+    {
+      "id": "aad16c33-2f56-44da-9bca-7fd662392597",
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -75.58223222054757,
+          39.1017189171707
+        ]
+      },
+      "properties": {
+        "street": "MOOSE LODGE Road",
+        "number": "537",
+        "postcode": "19934",
+        "postal_city": "Camden Wyoming",
+        "address_levels": [
+          {
+            "value": "DE"
+          },
+          {
+            "value": "Camden Wyoming"
+          }
+        ],
+        "country": "US",
+        "sources": [
+          {
+            "property": "",
+            "dataset": "NAD",
+            "license": "LicenseRef-Public-Domain-US",
+            "record_id": "7F508B2C-43C6-468F-97CF-D87D67A2691D",
+            "update_time": "2026-09-18T19:39:08.275Z",
+            "confidence": null,
+            "between": null,
+            "provider": "nad",
+            "resource": "nad",
+            "version": "20250924"
+          }
+        ],
+        "version": 1
+      }
+    },
+    {
+      "id": "1a0b14de-93ca-4c30-886f-f875020b387e",
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          -75.58238318582801,
+          39.10185360912575
+        ]
+      },
+      "properties": {
+        "street": "NEO Circle",
+        "number": "31",
+        "postcode": "19934",
+        "postal_city": "Camden Wyoming",
+        "address_levels": [
+          {
+            "value": "DE"
+          },
+          {
+            "value": "Camden Wyoming"
+          }
+        ],
+        "country": "US",
+        "sources": [
+          {
+            "property": "",
+            "dataset": "NAD",
+            "license": "LicenseRef-Public-Domain-US",
+            "record_id": "449CEEF3-4A76-4843-9CB2-31E95230C432",
+            "update_time": "2026-09-18T19:39:08.275Z",
+            "confidence": null,
+            "between": null,
+            "provider": "nad",
+            "resource": "nad",
+            "version": "20250924"
+          }
+        ],
+        "version": 1
+      }
+    }
+  ]
+}

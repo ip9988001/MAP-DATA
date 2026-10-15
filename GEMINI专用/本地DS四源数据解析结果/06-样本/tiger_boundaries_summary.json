@@ -1,0 +1,92 @@
+[
+  {
+    "file": "tiger_state_de.geojson",
+    "geometryType": "esriGeometryPolygon",
+    "wkid": 4326,
+    "features": 1,
+    "fields": [
+      "GEOID",
+      "STATE",
+      "STUSAB",
+      "BASENAME",
+      "NAME"
+    ],
+    "attributes": [
+      {
+        "GEOID": "10",
+        "STATE": "10",
+        "STUSAB": "DE",
+        "BASENAME": "Delaware",
+        "NAME": "Delaware"
+      }
+    ]
+  },
+  {
+    "file": "tiger_county_kent.geojson",
+    "geometryType": "esriGeometryPolygon",
+    "wkid": 4326,
+    "features": 1,
+    "fields": [
+      "GEOID",
+      "BASENAME",
+      "STATE",
+      "COUNTY",
+      "NAME"
+    ],
+    "attributes": [
+      {
+        "GEOID": "10001",
+        "BASENAME": "Kent",
+        "STATE": "10",
+        "COUNTY": "001",
+        "NAME": "Kent County"
+      }
+    ]
+  },
+  {
+    "file": "tiger_place_dover.geojson",
+    "geometryType": "esriGeometryPolygon",
+    "wkid": 4326,
+    "features": 1,
+    "fields": [
+      "GEOID",
+      "NAME",
+      "BASENAME",
+      "STATE",
+      "PLACE",
+      "CENTLAT",
+      "CENTLON"
+    ],
+    "attributes": [
+      {
+        "GEOID": "1021200",
+        "NAME": "Dover city",
+        "BASENAME": "Dover",
+        "STATE": "10",
+        "PLACE": "21200",
+        "CENTLAT": "+39.1612747",
+        "CENTLON": "-075.5205838"
+      }
+    ]
+  },
+  {
+    "file": "tiger_zcta_19901_19904.geojson",
+    "geometryType": "esriGeometryPolygon",
+    "wkid": 4326,
+    "features": 2,
+    "fields": [
+      "ZCTA5",
+      "GEOID"
+    ],
+    "attributes": [
+      {
+        "ZCTA5": "19904",
+        "GEOID": "19904"
+      },
+      {
+        "ZCTA5": "19901",
+        "GEOID": "19901"
+      }
+    ]
+  }
+]

@@ -1,4 +1,4 @@
-【TASK-003 交卷 · Dover DE 四源全量自动化 ETL → 24 字段黄金地址库】2026-10-15T07:25:30Z
+【TASK-003 交卷 · Dover DE 四源全量自动化 ETL → 24 字段黄金地址库】2026-10-15T07:28:31Z
 
 仓库：https://github.com/ip9988001/world-map-data-test
 脚本（runner 上运行，全自动，无逐条手工编辑）：scripts/dover_golden_coalesce.py
@@ -11,7 +11,7 @@
 
 # TASK-003 · Dover, DE 四源全量自动化 ETL 与 24 字段黄金地址库投产报告
 
-> 生成时间（UTC）：2026-10-15T07:25:15Z　运行环境：GitHub Actions runner（本地服务器零下载）
+> 生成时间（UTC）：2026-10-15T07:28:07Z　运行环境：GitHub Actions runner（本地服务器零下载）
 > 脚本：`scripts/dover_golden_coalesce.py`　输入：GitHub Release `dover-raw-20261015-0450`
 > 范围：bbox `[-75.6, 39.1, -75.45, 39.22]`　Kent County(10001) / Dover city(1021200) / ZCTA 19901·19904
 
@@ -1098,7 +1098,7 @@
 
 ## 五、50 条完整黄金地址样本（19901 / 19904）
 
-样本口劢：全量黄金库 27,163 条中，19901/19904 共 23,196 条，按 (zip5, 街道, 门牌, 单元) 排序等距抽 50 条，并保证含多单元（APT/STE）样本；全库 zip5 分布见 3.2（另有 19902/19934/19936/19962/19961 等 Kent 县邮编）。
+样本口径：全量黄金库 27,163 条中，19901/19904 共 23,196 条，按 (zip5, 街道, 门牌, 单元) 排序等距抽 50 条，并保证含多单元（APT/STE）样本；全库 zip5 分布见 3.2（另有 19902/19934/19936/19962/19961 等 Kent 县邮编）。
 
 | # | full_formatted_address | street_full | unit | addr_type | zip5 | lat | lon | source_confidence |
 |---|---|---|---|---|---|---|---|---|

@@ -21,6 +21,9 @@ on:
       commit_outputs:
         description: 是否把产物提交回 main（true/false）
         default: "true"
+      commit_scope:
+        description: 提交范围 all=全量(jsonl/csv+docs) docs=仅文档与漏斗
+        default: "all"
 
 permissions:
   contents: write
@@ -87,14 +90,23 @@ jobs:
         run: |
           git config user.name  "pi-agent-bot"
           git config user.email "pi-agent@users.noreply.github.com"
-          for f in data/dover/task003/dover_golden_addresses.jsonl \
-                   data/dover/task003/dover_golden_addresses.csv \
-                   data/dover/task003/golden_sample_50.csv \
-                   data/dover/task003/golden_fillrate_24fields.csv \
-                   data/dover/task003/dover_funnel.json \
-                   data/dover/task003/dover_task003_summary.json \
-                   data/dover/task003/five_address_4source_comparisons.json \
-                   docs/task003_report.md docs/task003_email_body.txt ; do
+          SCOPE="${{ inputs.commit_scope }}"
+          if [ "$SCOPE" = "docs" ]; then
+            LIST="data/dover/task003/dover_funnel.json data/dover/task003/dover_task003_summary.json \
+                  data/dover/task003/golden_fillrate_24fields.csv data/dover/task003/golden_sample_50.csv \
+                  data/dover/task003/five_address_4source_comparisons.json \
+                  docs/task003_report.md docs/task003_email_body.txt"
+          else
+            LIST="data/dover/task003/dover_golden_addresses.jsonl \
+                  data/dover/task003/dover_golden_addresses.csv \
+                  data/dover/task003/golden_sample_50.csv \
+                  data/dover/task003/golden_fillrate_24fields.csv \
+                  data/dover/task003/dover_funnel.json \
+                  data/dover/task003/dover_task003_summary.json \
+                  data/dover/task003/five_address_4source_comparisons.json \
+                  docs/task003_report.md docs/task003_email_body.txt"
+          fi
+          for f in $LIST ; do
             if [ -f "$f" ]; then git add "$f"; else echo "⚠️ 缺失产物: $f"; fi
           done
           if git diff --cached --quiet; then

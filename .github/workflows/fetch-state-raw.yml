@@ -18,6 +18,14 @@ on:
       nad_max:
         description: NAD 最大行数（全州一般给足 800000）
         default: "800000"
+      nad_shards:
+        description: NAD 切块方式（county=按县并发提速 / grid=网格并发 / none=整州顺次）
+        type: choice
+        options: [county, grid, none]
+        default: county
+      nad_workers:
+        description: NAD 分片并发数（网络 IO 密集，4~8 都安全）
+        default: "4"
       overture_format:
         description: Overture 落地格式（parquet 优先，失败自动回落 geojson）
         type: choice
@@ -54,7 +62,7 @@ jobs:
 
       - name: 打印本次运行参数与州配置档
         run: |
-          echo "state=${{ inputs.state }} tag=${{ inputs.tag }} nad_max=${{ inputs.nad_max }} fmt=${{ inputs.overture_format }}"
+          echo "state=${{ inputs.state }} tag=${{ inputs.tag }} nad_max=${{ inputs.nad_max }} fmt=${{ inputs.overture_format }} shards=${{ inputs.nad_shards }} workers=${{ inputs.nad_workers }}"
           sed -n '1,40p' rules/US/state_roster.yaml
 
       - name: 单州四源全量抓取（runner 侧下载，本机零下载）
@@ -63,7 +71,7 @@ jobs:
           RELEASE_TAG: ${{ inputs.tag }}
         run: |
           set -u
-          ARGS="--state ${{ inputs.state }} --nad-max ${{ inputs.nad_max }} --overture-format ${{ inputs.overture_format }}"
+          ARGS="--state ${{ inputs.state }} --nad-max ${{ inputs.nad_max }} --overture-format ${{ inputs.overture_format }} --nad-shards ${{ inputs.nad_shards }} --nad-workers ${{ inputs.nad_workers }}"
           if [ -n "$RELEASE_TAG" ]; then ARGS="$ARGS --tag $RELEASE_TAG"; fi
           if [ "${{ inputs.publish_release }}" = "true" ]; then ARGS="$ARGS --publish-release"; fi
           echo "python bots/fetch_state_raw.py $ARGS"

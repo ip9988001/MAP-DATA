@@ -39,6 +39,7 @@ import subprocess
 import sys
 import time
 import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -160,6 +161,7 @@ class Fetcher:
         self.status: dict[str, dict] = {}   # 每源最终状态
         self.problems: list[str] = []       # 门禁问题（缺源/空壳/边界空）
         self.files: list[Path] = []
+        self.cache: dict = {}               # 跨源共享（县界多边形：NAD 切块与 TIGER 导出共用）
 
     # -- 记账 ----------------------------------------------------------------
     def note(self, source: str, status: str, **kw) -> dict:
@@ -187,12 +189,13 @@ class Fetcher:
 
 # --------------------------------------------------------------------------- A. NAD
 def _nad_bbox_pull(fx: Fetcher, bbox_str: str, fields: list[str], oid: str,
-                   limit: int, page: int, fh, seen: set) -> tuple[int, int]:
+                   limit: int, page: int, fh, seen: set, tag: str = "") -> tuple[int, int]:
     """★ 游标分页：orderByFields + `WHERE OBJECTID > last_id`，彻底绕开深分页熔断。
 
     旧实现用 resultOffset 翻页，跑到 offset=8000 就被 Esri 以
     `400 Cannot perform query / Invalid query parameters` 拒掉（全州实测）。
-    游标法深度无上限 —— 10 万条还是 100 万条都是同样的往返次数模型。
+    探针复测后确认那其实是**服务端抖动**（同一组参数时好时坏），所以除了游标，
+    这里还叠了 _esri_query 的指数退避重试 + 连续被拒时缩页。
 
     内存纪律：**流式直接写 ndjson**，只在内存里留一个 OID 集合做去重
     （40 万行 ≈ 30MB，而不是把 40 万个 39 字段字典全揣在内存里）。
@@ -216,13 +219,13 @@ def _nad_bbox_pull(fx: Fetcher, bbox_str: str, fields: list[str], oid: str,
             "f": "json",
         }
         payload = _esri_query(f"{df.NAD_OFFICIAL}/query", params, tries=4,
-                              label=f"NAD page {pages + 1}（cursor={cursor} rc={batch}）",
+                              label=f"NAD{tag} page {pages + 1}（cursor={cursor} rc={batch}）",
                               timeout=fx.args.nad_timeout)
         if payload.get("error"):
             # 连续重试仍被拒 → 单页缩半再试（1000 → 500 → 250 → 125 → 100）
             if batch > 100:
                 page = max(100, batch // 2)
-                log(f"⚠️ NAD 连续被拒 → 单页缩到 {page} 再试")
+                log(f"⚠️ NAD{tag} 连续被拒 → 单页缩到 {page} 再试")
                 continue
             raise RuntimeError(f"query error {str(payload['error'])[:200]} | cursor={cursor} page={pages + 1} rc={batch}")
         feats = payload.get("features") or []
@@ -253,21 +256,95 @@ def _nad_bbox_pull(fx: Fetcher, bbox_str: str, fields: list[str], oid: str,
         if len(feats) < batch or newly == 0:
             break
         if cursor is not None and last == cursor:
-            log(f"⚠️ 游标未前进（{oid}={cursor}）→ 退出防死循环")
+            log(f"⚠️ NAD{tag} 游标未前进（{oid}={cursor}）→ 退出防死循环")
             break
         if last is None:
-            log(f"⚠️ 本页没有任何 {oid}，无法推进游标 → 退出防死循环")
+            log(f"⚠️ NAD{tag} 本页没有任何 {oid}，无法推进游标 → 退出防死循环")
             break
         cursor = last
     return added, pages
 
 
 def _nad_official_count(fx: Fetcher, bbox_str: str):
-    payload = df.http_json(f"{df.NAD_OFFICIAL}/query", {
+    payload = _esri_query(f"{df.NAD_OFFICIAL}/query", {
         "where": "1=1", "geometry": bbox_str, "geometryType": "esriGeometryEnvelope",
         "inSR": "4326", "spatialRel": "esriSpatialRelIntersects",
-        "returnCountOnly": "true", "f": "json"}, timeout=fx.args.nad_timeout)
+        "returnCountOnly": "true", "f": "json"}, tries=3, label="NAD 官方计数",
+        timeout=fx.args.nad_timeout)
     return payload.get("count")
+
+
+def _geojson_bbox(payload: dict):
+    """从 Polygon / MultiPolygon 的 rings 里算包围盒（只取坐标，不碰属性）。"""
+    xs, ys = [], []
+    for feat in payload.get("features") or []:
+        geom = feat.get("geometry") or {}
+        rings = geom.get("rings") or []
+        if not rings and geom.get("type") == "MultiPolygon":
+            rings = [r for poly in (geom.get("coordinates") or []) for r in poly]
+        for ring in rings:
+            for pt in ring:
+                try:
+                    xs.append(float(pt[0]))
+                    ys.append(float(pt[1]))
+                except (TypeError, ValueError, IndexError):
+                    continue
+    if not xs:
+        return None
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+def _nad_shards(fx: Fetcher) -> list[dict]:
+    """★ 按县切块：每个县一个独立 bbox，多个县并发翻页。
+
+    为什么快：
+      1) 并发 —— 3 个县 = 3 条流水线同时翻，整州顺次翻是 400+ 次串行往返；
+      2) 小框 —— 单个县的 envelope 比整州小一个量级，服务端单次响应明显更快。
+    为什么不会漏：
+      每个县的多边形都被自己的 bbox 包住 → 县 bbox 的并集 ⊇ 整州；框重叠只会产生
+      重复行，重复行在合并阶段按 OID 去掉 —— 是「超集 + 去重」，不是「近似」。
+    """
+    mode = fx.args.nad_shards
+    if mode == "none":
+        return [{"key": "whole", "bbox": tuple(fx.cfg["bbox"])}]
+    if mode == "grid":
+        n = max(2, int(fx.args.nad_grid))
+        W, S, E, N = fx.cfg["bbox"]
+        xs = [W + (E - W) * i / n for i in range(n + 1)]
+        ys = [S + (N - S) * j / n for j in range(n + 1)]
+        return [{"key": f"grid_{i}{j}", "bbox": (xs[i], ys[j], xs[i + 1], ys[j + 1])}
+                for i in range(n) for j in range(n)]
+    # county（默认）
+    bnd = _county_boundaries(fx)          # 县界同时给 TIGER 用 → 只查一次
+    shards = []
+    for c in fx.cfg["counties"]:
+        rec = bnd.get(f"county_{c['key']}")
+        if not rec:
+            continue
+        bb = _geojson_bbox(rec["payload"])
+        if bb:
+            shards.append({"key": f"cty_{c['key']}", "bbox": bb})
+    if len(shards) < 2:
+        log(f"⚠️ 可用县界只有 {len(shards)} 个 → 退回「州 bbox 切 2×2 网格」并发")
+        fx.args.nad_shards = "grid"
+        fx.args.nad_grid = 2
+        return _nad_shards(fx)
+    return shards
+
+
+def _nad_shard_worker(fx: Fetcher, shard: dict, fields: list[str], oid: str,
+                      page: int, limit: int) -> dict:
+    """单个分片的独立翻页：写自己的 part 文件，线程之间零共享。"""
+    bbox_str = ",".join(str(v) for v in shard["bbox"])
+    part = fx.dir("nad") / f"nad_part_{shard['key']}.ndjson"
+    seen: set = set()
+    t0 = time.time()
+    with part.open("w", encoding="utf-8") as fh:
+        added, pages = _nad_bbox_pull(fh=fh, seen=seen, fx=fx, bbox_str=bbox_str, fields=fields,
+                                      oid=oid, limit=limit, page=page,
+                                      tag=f"[{shard['key']}]")
+    return {"shard": shard["key"], "bbox": bbox_str, "rows": added, "pages": pages,
+            "bytes": part.stat().st_size, "elapsed": round(time.time() - t0, 1), "part": part}
 
 
 def harvest_nad(fx: Fetcher) -> None:
@@ -287,27 +364,64 @@ def harvest_nad(fx: Fetcher) -> None:
     # ★ 单页硬上限 1000：实测 rc=2000（=maxRecordCount）会被 400 拒，rc=1000 稳定返回满页
     page = int(fx.args.nad_page) if fx.args.nad_page else min(maxrc, 1000)
     page = max(1, min(page, maxrc, 1000))
-    official = _nad_official_count(fx, fx.cfg["bbox_str"])
 
+    shards = _nad_shards(fx)
+    workers = max(1, min(int(fx.args.nad_workers), len(shards)))
+    official = _nad_official_count(fx, fx.cfg["bbox_str"])
+    log(f"NAD 切块={fx.args.nad_shards}｜分片={len(shards)}｜并发={workers}｜单页={page}｜"
+        f"官方 count(整州)={official}｜分片：{[s['key'] for s in shards]}")
+
+    # ---- 分片并发抓取（单分片失败不拖垮整轮，留待整州自愈兜底）----
+    parts, shard_detail = [], []
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = {ex.submit(_nad_shard_worker, fx, s, fields, oid, page, fx.args.nad_max): s
+                for s in shards}
+        for fut in as_completed(futs):
+            s = futs[fut]
+            try:
+                info = fut.result()
+                parts.append(info.pop("part"))
+                shard_detail.append(info)
+            except Exception as exc:  # noqa: BLE001
+                shard_detail.append({"shard": s["key"], "bbox": list(s["bbox"]),
+                                     "error": f"{type(exc).__name__}: {str(exc)[:200]}"})
+                log(f"⚠️ NAD 分片 {s['key']} 失败：{str(exc)[:160]}（交由整州自愈兜底）")
+
+    # ---- 合并去重（县 bbox 互相重叠 → 必须按 OID 去重）----
     ndjson = d / f"nad_us_{fx.cfg['state'].lower()}_full.ndjson"
     seen: set = set()
-    repair = None
-    with ndjson.open("w", encoding="utf-8") as fh:
-        added, pages = _nad_bbox_pull(fh=fh, seen=seen, fx=fx, bbox_str=fx.cfg["bbox_str"],
-                                     fields=fields, oid=oid, limit=fx.args.nad_max, page=page)
-        # 自愈：游标结果明显少于官方 count 时，把包围盒切 4 块重拉（仍按 OID 去重，不掩盖缺口）
+    with ndjson.open("w", encoding="utf-8") as out:
+        for part in parts:
+            with part.open(encoding="utf-8") as fh:
+                for line in fh:
+                    if not line.strip():
+                        continue
+                    o = json.loads(line).get(oid)
+                    if o is not None:
+                        if o in seen:
+                            continue
+                        seen.add(o)
+                    out.write(line if line.endswith("\n") else line + "\n")
+        added = len(seen)
+        dup_dropped = sum(x.get("rows", 0) for x in shard_detail) - added
+
+        # ---- 整州自愈：合并后仍少于官方 count 的 99% → 4 分块重拉补缺口 ----
+        repair = None
         if official and added < int(official) * 0.99:
             W, S, E, N = fx.cfg["bbox"]
             midx, midy = (W + E) / 2, (S + N) / 2
             tiles = [(W, S, midx, midy), (midx, S, E, midy), (W, midy, midx, N), (midx, midy, E, N)]
             extra_rows = extra_pages = 0
             for tl in tiles:
-                n, p = _nad_bbox_pull(fh=fh, seen=seen, fx=fx, bbox_str=",".join(str(v) for v in tl),
-                                      fields=fields, oid=oid, limit=fx.args.nad_max, page=page)
+                n, p = _nad_bbox_pull(fh=out, seen=seen, fx=fx,
+                                      bbox_str=",".join(str(v) for v in tl), fields=fields,
+                                      oid=oid, limit=fx.args.nad_max, page=page, tag="[repair]")
                 extra_rows += n
                 extra_pages += p
             added += extra_rows
             repair = {"tiles": 4, "pages": extra_pages, "rows_added": extra_rows, "after": added}
+    for p in parts:
+        p.unlink(missing_ok=True)
 
     (d / "nad_full_columns.json").write_text(
         json.dumps({"fields": fields, "fields_n": len(fields), "object_id_field": oid},
@@ -318,14 +432,15 @@ def harvest_nad(fx: Fetcher) -> None:
     fx.note("nad", "warn-truncated" if truncated else "ok",
             channel="A-official-rest", endpoint=df.NAD_OFFICIAL,
             pagination=f"cursor: orderByFields={oid} ASC + where {oid} > last_id",
-            page_size=page, pages=pages, repair=repair, streamed_to=rel(ndjson),
+            shard_mode=fx.args.nad_shards, shard_count=len(shards), workers=workers,
+            shard_detail=shard_detail, cross_shard_dup_dropped=max(0, dup_dropped),
+            page_size=page, repair=repair, streamed_to=rel(ndjson),
             fields_n=len(fields), rows_fetched=added, official_count_in_bbox=official,
             truncated=truncated, bytes=ndjson.stat().st_size, elapsed=round(time.time() - t0, 1))
     if truncated:
-        fx.problem(f"NAD 拉取 {added} 行 < 官方 count {official}（已尝试 4 分块自愈）")
+        fx.problem(f"NAD 拉取 {added} 行 < 官方 count {official}（已尝试分片 + 4 分块自愈）")
     if added == 0:
         fx.problem("NAD 一行都没拉到")
-
 
 # --------------------------------------------------------------------------- B. Overture
 def _count_parquet(path: Path) -> int | None:
@@ -451,13 +566,29 @@ def harvest_openaddresses(fx: Fetcher) -> None:
 
 
 # --------------------------------------------------------------------------- D. Census TIGER
-def _tiger_boundary_queries(cfg: dict) -> list[tuple[str, str, list[tuple[str, str, str | None]]]]:
-    """返回 (key, layer, [(where, outFields, local_filter_value), ...]) —— 多组候选依次重试。
+def _geojson_local_field(key: str) -> str:
+    """本地兜底过滤时用哪个字段判值。"""
+    if key == "zcta":
+        return "ZCTA5"
+    if key.startswith("county_"):
+        return "COUNTY"
+    if key.startswith("place_"):
+        return "BASENAME"
+    return "STATE"
 
-    ★ 县界的 COUNTY 字段长度=3（图层元数据实证），必须用 3 位码：
+
+def _tiger_boundary_queries(cfg: dict) -> list[tuple[str, str, list[tuple[str, str, str | None]]]]:
+    """州界 / ZCTA / 市界的候选查询链。
+
+    返回 (key, layer, [(where, outFields, local_filter_value), ...])，多组候选依次重试。
+    县界不在这里 —— 它单独走 `_county_boundaries()`，因为 NAD 的按县切块也要用同一份
+    县界多边形，两边共用缓存，只查一次。
+
+    ★ 县界用 3 位 COUNTY 码（图层元数据实证：字段 COUNTY 长度=3）：
         STATE='10' AND COUNTY='001'   ✅
-        STATE='10' AND COUNTY='10001' ❌ → 服务端返回 features=[] 空壳
-      最后一组兜底：把整州取回来本地筛，保证边界不空。
+        STATE='10' AND COUNTY='10001' ❌ → 服务端静默返回 features=[] 空壳
+    ★ ZCTA 图层**没有 STATE 字段**（实证：带 STATE → 400 Failed to execute query），
+       只能 "ZCTA5,GEOID"。
     """
     t = cfg["_endpoints"]
     s2 = cfg["state_fips"]
@@ -470,21 +601,8 @@ def _tiger_boundary_queries(cfg: dict) -> list[tuple[str, str, list[tuple[str, s
                (f"STUSAB='{cfg['state']}'", "GEOID,STATE,STUSAB,BASENAME,NAME", None),
                ("1=1", "GEOID,STATE,STUSAB,BASENAME,NAME", s2)]))
 
-    # 县界（3 位 COUNTY 码）
-    fields_c = "GEOID,BASENAME,STATE,COUNTY,NAME"
-    for c in cfg["counties"]:
-        q.append((f"county_{c['key']}",
-                  f"{t['tigerweb']}/State_County/MapServer/1",
-                  [(f"STATE='{s2}' AND COUNTY='{c['fips3']}'", fields_c, None),
-                   (f"STATE='{s2}' AND COUNTY='{c['fips']}'", fields_c, None),
-                   (f"STATEFP='{s2}' AND COUNTYFP='{c['fips3']}'", fields_c, None),
-                   (f"STATE='{s2}'", fields_c, c["fips3"])]))
-
     # ZCTA5 邮编区（本州邮编段）
     if cfg["zcta_lo"] and cfg["zcta_hi"]:
-        # ⚠️ ZCTA 图层的字段里**没有 STATE**（实证：outFields 带 STATE → 400 Failed to execute query；
-        #    该图层实际字段：OID/ZCTA5/GEOID/BASENAME/LSADC/NAME/OBJECTID/…）
-        #    所以这里只用 "ZCTA5,GEOID"；去掉 STATE 后同一个 where 立刻返回 68 个 ZCTA。
         q.append(("zcta",
                   f"{t['tigerweb']}/PUMA_TAD_TAZ_UGA_ZCTA/MapServer/1",
                   [(f"ZCTA5>='{cfg['zcta_lo']}' AND ZCTA5<='{cfg['zcta_hi']}'", "ZCTA5,GEOID", None),
@@ -502,10 +620,78 @@ def _tiger_boundary_queries(cfg: dict) -> list[tuple[str, str, list[tuple[str, s
 
 
 def _local_filter(feats: list, field: str, value: str) -> list:
+    """本地兜底过滤：整州取回来后在内存里筛（ZCTA 用 "lo:hi" 段，其余精确匹配）。"""
     if field == "ZCTA5" and ":" in value:
         lo, hi = value.split(":", 1)
         return [f for f in feats if lo <= str(((f.get("attributes") or {}).get(field)) or "") <= hi]
     return [f for f in feats if str(((f.get("attributes") or {}).get(field)) or "") == value]
+
+
+def _tiger_boundary_one(fx: Fetcher, key: str, layer: str,
+                        attempts: list[tuple[str, str, str | None]]) -> tuple[dict | None, dict]:
+    """查一条边界：多组候选（含"整州取回本地筛"兜底）+ 重试。
+
+    返回 (payload | None, detail)。失败时 detail 里带完整候选重试链，便于事后归因。
+    """
+    tried = []
+    for where, fields, local in attempts:
+        try:
+            payload = _esri_query(f"{layer}/query", {
+                "where": where, "outFields": fields, "returnGeometry": "true",
+                "outSR": "4326", "f": "json"}, tries=3, label=f"TIGER {key}",
+                timeout=fx.args.tiger_timeout)
+        except Exception as exc:  # noqa: BLE001
+            tried.append({"where": where, "error": str(exc)[:150]})
+            continue
+        if payload.get("error"):
+            tried.append({"where": where, "esri_error": str(payload["error"])[:160]})
+            continue
+        feats = payload.get("features") or []
+        if local is not None:
+            feats = _local_filter(feats, _geojson_local_field(key), local)
+            payload = {**payload, "features": feats}
+        if not feats:
+            tried.append({"where": where, "features": 0})
+            continue
+        return payload, {"key": key, "layer": layer, "where": where, "features": len(feats)}
+    return None, {"key": key, "layer": layer, "status": "all_attempts_failed", "tried": tried}
+
+
+def _county_boundaries(fx: Fetcher) -> dict:
+    """取本州全部县界多边形：落盘 + 缓存，供 NAD 按县切块与 TIGER 边界导出**共用**。
+
+    返回 {county_<key>: {"payload":…, "detail":…, "path": Path}}。
+    """
+    cached = fx.cache.get("county_boundaries")
+    if cached is not None:
+        return cached
+    d = fx.dir("tiger")
+    s2 = fx.cfg["state_fips"]
+    layer = f"{fx.cfg['_endpoints']['tigerweb']}/State_County/MapServer/1"
+    fields_c = "GEOID,BASENAME,STATE,COUNTY,NAME"
+    out: dict = {}
+    for c in fx.cfg["counties"]:
+        key = f"county_{c['key']}"
+        attempts = [(f"STATE='{s2}' AND COUNTY='{c['fips3']}'", fields_c, None),
+                    (f"STATE='{s2}' AND COUNTY='{c['fips']}'", fields_c, None),
+                    (f"STATEFP='{s2}' AND COUNTYFP='{c['fips3']}'", fields_c, None),
+                    (f"STATE='{s2}'", fields_c, c["fips3"])]
+        payload, detail = _tiger_boundary_one(fx, key, layer, attempts)
+        if not payload:
+            detail["reason"] = "县界候选链全部失败/空壳"
+            fx.cache.setdefault("county_misses", []).append(detail)
+            continue
+        path = d / f"tiger_{key}.geojson"
+        path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        size = path.stat().st_size
+        if size < MIN_ASSET_BYTES:            # ★ 空壳绝不当资产上传，也不参与切块
+            path.unlink()
+            fx.cache.setdefault("county_misses", []).append(
+                {**detail, "reason": f"产物仅 {size}B < {MIN_ASSET_BYTES}B，按空壳丢弃"})
+            continue
+        out[key] = {"payload": payload, "detail": detail, "path": path}
+    fx.cache["county_boundaries"] = out
+    return out
 
 
 def harvest_tiger(fx: Fetcher) -> None:
@@ -514,47 +700,33 @@ def harvest_tiger(fx: Fetcher) -> None:
     files, detail, misses = [], [], []
     base = fx.cfg["_endpoints"]["tiger_base"]
 
+    # 1) 县界（NAD 按县切块可能已经先取过 → 直接复用缓存，不重复请求）
+    cached = _county_boundaries(fx)
+    for key, rec in cached.items():
+        files.append(rec["path"])
+        detail.append(rec["detail"])
+    misses.extend(fx.cache.get("county_misses") or [])
+    for c in fx.cfg["counties"]:
+        if f"county_{c['key']}" not in cached:
+            misses.append({"key": f"county_{c['key']}", "reason": "县界未取到（候选链全挂 / 空壳）"})
+
+    # 2) 州界 / ZCTA / 市界
     for key, layer, attempts in _tiger_boundary_queries(fx.cfg):
-        got, tried = None, []
-        for where, fields, local in attempts:
-            try:
-                payload = _esri_query(f"{layer}/query", {
-                    "where": where, "outFields": fields, "returnGeometry": "true",
-                    "outSR": "4326", "f": "json"}, tries=3, label=f"TIGER {key}",
-                    timeout=fx.args.tiger_timeout)
-                if payload.get("error"):
-                    tried.append({"where": where, "esri_error": str(payload["error"])[:160]})
-                    continue
-                feats = payload.get("features") or []
-                if local is not None:
-                    lf = "ZCTA5" if key == "zcta" else ("COUNTY" if key.startswith("county_") else
-                                                        ("BASENAME" if key.startswith("place_") else "STATE"))
-                    payload = {**payload, "features": _local_filter(feats, lf, local)}
-                    feats = payload["features"]
-                if not feats:
-                    tried.append({"where": where, "features": 0})
-                    continue
-                got = (where, payload, len(feats))
-                break
-            except Exception as exc:  # noqa: BLE001
-                tried.append({"where": where, "error": str(exc)[:150]})
-        if not got:
-            misses.append({"key": key, "layer": layer, "tried": tried})
-            continue                       # ★ 不落文件：空壳绝不当资产上传
-        where, payload, n = got
+        payload, dd = _tiger_boundary_one(fx, key, layer, attempts)
+        if not payload:
+            misses.append(dd)
+            continue
         path = d / f"tiger_{key}.geojson"
         path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         size = path.stat().st_size
         if size < MIN_ASSET_BYTES:
             path.unlink()
-            misses.append({"key": key, "layer": layer,
-                           "reason": f"产物仅 {size}B < {MIN_ASSET_BYTES}B，按空壳丢弃"})
+            misses.append({**dd, "reason": f"产物仅 {size}B < {MIN_ASSET_BYTES}B，按空壳丢弃"})
             continue
         files.append(path)
-        detail.append({"key": key, "layer": layer, "where": where, "features": n,
-                       "file": rel(path)})
+        detail.append({**dd, "file": rel(path)})
 
-    # 号段小包：每县一个（包名用 5 位县 FIPS）
+    # 3) 号段小包：每县一个（包名用 5 位县 FIPS）
     for c in fx.cfg["counties"]:
         name = f"tl_2024_{c['fips']}_addrfeat.zip"
         url = f"{base}/ADDRFEAT/{name}"
@@ -602,7 +774,8 @@ def harvest_tiger(fx: Fetcher) -> None:
             detail=detail, missed=misses, counties=len(fx.cfg["counties"]),
             elapsed=round(time.time() - t0, 1))
     for m in misses:
-        fx.problem(f"TIGER 缺失/空壳：{m.get('key') or m.get('file')} → {json.dumps(m.get('tried') or m.get('error') or m.get('reason'), ensure_ascii=False)[:200]}")
+        fx.problem(f"TIGER 缺失/空壳：{m.get('key') or m.get('file')} → "
+                   f"{json.dumps(m.get('tried') or m.get('error') or m.get('reason'), ensure_ascii=False)[:200]}")
 
 
 # --------------------------------------------------------------------------- 门禁 / 打包
@@ -747,8 +920,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--skip-gate", action="store_true", help="跳过发布门禁（仅排障用，禁止在正式跑里用）")
     # 四源参数
     ap.add_argument("--nad-max", type=int, default=800000)
-    ap.add_argument("--nad-page", type=int, default=0, help="留空 = 用图层 maxRecordCount（上限 2000）")
+    ap.add_argument("--nad-page", type=int, default=0, help="留空 = 用图层 maxRecordCount（硬上限 1000）")
     ap.add_argument("--nad-timeout", type=int, default=300)
+    ap.add_argument("--nad-shards", choices=["county", "grid", "none"], default="county",
+                    help="NAD 切块方式：county=按县并发（默认）｜grid=按州 bbox 网格并发｜none=整州单框顺次")
+    ap.add_argument("--nad-grid", type=int, default=2, help="--nad-shards grid 时的 N（N×N）")
+    ap.add_argument("--nad-workers", type=int, default=4, help="NAD 分片并发数（网络 IO 密集，4~8 都安全）")
     ap.add_argument("--overture-format", choices=["parquet", "geojson"], default="parquet")
     ap.add_argument("--overture-timeout", type=int, default=7200)
     ap.add_argument("--oa-max-mb", type=int, default=800)

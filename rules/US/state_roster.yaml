@@ -1,0 +1,58 @@
+# 美国州级下载配置档 · state_roster.yaml
+# ============================================================================
+# 单一事实来源：`bots/fetch_state_raw.py` 只认这张表，代码里不出现任何州特有常量。
+# 新增一个州 = 在这张表里加一段，**不改一行代码**。
+#
+# 字段说明（每个州一段）：
+#   name          州全名（只用于文档/Release 标题）
+#   state_fips    2 位州 FIPS（字符串，如 DE='10'、RI='44'）
+#   bbox          [W, S, E, N] 经纬度包围盒 —— 四个源统一用它做过滤（NAD/Overture 都吃 BBox）
+#   zcta_range    [起, 止] ZCTA5 邮编段，用来圈定"本州邮编区间"，避免抓进邻州
+#   counties      本州县清单：key=资产名用的短键｜fips=5 位县 FIPS｜name=官方县名
+#                 注意：TIGER/Line 的 addrfeat 包名用的是 **5 位县 FIPS**
+#   oa_priority   OpenAddresses 源优先序（只是排序偏好，实际源清单按州动态枚举，不写死）
+#   places        可选：要单独导出的市界 BASENAME 列表（TIGERweb Places 图层）
+#   note          备注
+# ============================================================================
+
+version: 1
+country: US
+
+# 全州通用的端点常量（改版换代只需改这里）
+endpoints:
+  tiger_base: https://www2.census.gov/geo/tiger/TIGER2024
+  tigerweb: https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb
+  openaddresses_home: https://results.openaddresses.io/
+  openaddresses_run: https://data.openaddresses.io/runs/{run}/us/{st}/{src}.zip
+
+states:
+
+  # --------------------------------------------------------------------------
+  DE:
+    name: Delaware
+    state_fips: "10"
+    bbox: [-75.8, 38.44, -75.04, 39.85]
+    zcta_range: ["19700", "19980"]      # DE 邮编段，避开宾州 PA 的 19xxx
+    counties:
+      - {key: kent,       fips: "10001", name: Kent}
+      - {key: new_castle, fips: "10003", name: New Castle}
+      - {key: sussex,     fips: "10005", name: Sussex}
+    oa_priority: [kent, city_of_dover, new_castle, sussex]
+    places: [Dover]
+    note: 三县全境；已跑通过的基准州，用于回归验证
+
+  # --------------------------------------------------------------------------
+  RI:
+    name: Rhode Island
+    state_fips: "44"
+    bbox: [-71.907, 41.146, -71.120, 42.019]
+    zcta_range: ["02800", "02940"]      # RI 邮编段 028xx–029xx
+    counties:
+      - {key: bristol,    fips: "44001", name: Bristol}
+      - {key: kent,       fips: "44003", name: Kent}
+      - {key: newport,    fips: "44005", name: Newport}
+      - {key: providence, fips: "44007", name: Providence}
+      - {key: washington, fips: "44009", name: Washington}
+    oa_priority: []                     # 让 OA 按动态枚举的名字自然排序
+    places: [Providence, Warwick, Cranston]
+    note: 全美面积最小的州，5 个县，适合作为"小州首跑"验证位

@@ -1,0 +1,99 @@
+name: fetch-state-raw
+
+# 通用分州纯下载工厂 —— 单州四源【全量原始】抓取 → 直发 GitHub Releases
+# 四源：USDOT NAD（游标分页） / Overture Maps（CLI，parquet 优先） /
+#       OpenAddresses（动态枚举该州全部源） / Census TIGER（边界 REST + 号段小包）
+# 铁律：所有下载都在 runner 上跑（本机零下载）；产物不进 git，只作为 Release 资产；
+#       发布前有门禁 —— 缺源 / 空壳 / 边界 features=0 一律阻断，绝不推废资产上架。
+
+on:
+  workflow_dispatch:
+    inputs:
+      state:
+        description: 州简称（查 rules/US/state_roster.yaml，如 DE / RI）
+        default: DE
+      tag:
+        description: Release tag（留空 = raw-US-<州>-v1）
+        default: ""
+      nad_max:
+        description: NAD 最大行数（全州一般给足 800000）
+        default: "800000"
+      overture_format:
+        description: Overture 落地格式（parquet 优先，失败自动回落 geojson）
+        type: choice
+        options: [parquet, geojson]
+        default: parquet
+      publish_release:
+        description: 是否建 Release 并上架资产（false = 只抓取 + 存 artifact）
+        type: choice
+        options: ["true", "false"]
+        default: "true"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fetch-state-raw-${{ inputs.state }}
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    # 大州（CA/TX）请把这个值调大，超时会中断整轮
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: 装依赖（纯 pip wheel：overturemaps CLI + pyshp + pyyaml + duckdb）
+        run: pip install -r requirements.txt
+
+      - name: 打印本次运行参数与州配置档
+        run: |
+          echo "state=${{ inputs.state }} tag=${{ inputs.tag }} nad_max=${{ inputs.nad_max }} fmt=${{ inputs.overture_format }}"
+          sed -n '1,40p' rules/US/state_roster.yaml
+
+      - name: 单州四源全量抓取（runner 侧下载，本机零下载）
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -u
+          ARGS="--state ${{ inputs.state }} --nad-max ${{ inputs.nad_max }} --overture-format ${{ inputs.overture_format }}"
+          if [ -n "$RELEASE_TAG" ]; then ARGS="$ARGS --tag $RELEASE_TAG"; fi
+          if [ "${{ inputs.publish_release }}" = "true" ]; then ARGS="$ARGS --publish-release"; fi
+          echo "python bots/fetch_state_raw.py $ARGS"
+          python bots/fetch_state_raw.py $ARGS
+
+      - name: 结果摘要（供人工复核）
+        if: always()
+        run: |
+          OUT="data/raw/US-${{ inputs.state }}"
+          find "$OUT" -type f -printf '%10s  %p\n' 2>/dev/null | sort -k2 || true
+          echo "--- 各源状态 ---"
+          python - <<'PY'
+          import json, pathlib, os
+          p = pathlib.Path(f"data/raw/US-{os.environ.get('STATE','DE')}/MANIFEST.json")
+          if not p.exists():
+              print("MANIFEST 未生成")
+              raise SystemExit(0)
+          m = json.loads(p.read_text(encoding="utf-8"))
+          for s in m["sources"]:
+              keep = {k: v for k, v in s.items() if k not in ("detail", "ledger")}
+              print(json.dumps(keep, ensure_ascii=False)[:500])
+          print("assets:", len(m["assets"]), "total_bytes:", sum(a["bytes"] for a in m["assets"]))
+          PY
+        env:
+          STATE: ${{ inputs.state }}
+
+      - name: 上传产物体（全量原始资产，便于外部取用）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: raw-US-${{ inputs.state }}-${{ github.run_id }}
+          path: data/raw/US-${{ inputs.state }}
+          retention-days: 30

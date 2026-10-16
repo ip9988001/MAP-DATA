@@ -1,3 +1,5 @@
-# Dover 取样机器人依赖（全部纯 pip wheel，CI 不编译）
-overturemaps>=0.9.0    # Overture Maps 官方 CLI：--bbox 云端切片
+# 通用分州下载工厂依赖（全部纯 pip wheel，CI 不编译、不装 GDAL）
+overturemaps>=0.9.0    # Overture Maps 官方 CLI：--bbox 云端切片（parquet / geojson）
 pyshp>=2.3.1           # 读 TIGER/Line 的 .dbf/.shp（不装 GDAL）
+pyyaml>=6.0            # 读 rules/US/state_roster.yaml 州配置档
+duckdb>=1.0            # 仅用于 parquet 产物计数与后续 ETL 流式读取（可选，缺失不影响抓取）

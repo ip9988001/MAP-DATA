@@ -3,3 +3,6 @@ data/dover/task003/raw/
 data/dover/full/
 *.pyc
 __pycache__/
+
+# 通用分州下载工厂产物（1GB 级原始数据，只进 Release，不进 git）
+data/raw/

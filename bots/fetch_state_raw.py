@@ -72,6 +72,37 @@ def rel(p) -> str:
         return str(p)
 
 
+def _esri_query(url: str, params: dict, tries: int = 4, label: str = "", timeout: int = 120) -> dict:
+    """Esri / 联邦视图查询：**必须重试**，不能一次 400 就判死刑。
+
+    2026-10-16 探针实证（DOT NAD 联邦视图，同一图层同一 bbox）：
+      · `resultRecordCount=2`                          → ✅
+      · `resultOffset=0` 单独带上（无 orderBy）           → ❌ 400 Cannot perform query
+      · `orderByFields=OBJECTID ASC` + rc=2            → ✅
+      · `resultRecordCount=2000`（=maxRecordCount）     → ❌ 400
+      · rc=1000 + resultOffset=0（旧代码姿势）            → ✅ 返回 1000 条
+    同一组参数时好时坏 → 这就是为什么旧版在 offset=8000 上“偶然”撞上 400、
+    而换一组参数又在第 1 页撞上 —— 不是深度分页熔断，是服务端抖动。
+    对策：重试（指数退避）+ 失败时缩页，最后仍失败才算真失败。
+    """
+    delay = 2.0
+    last = ""
+    for i in range(1, tries + 1):
+        try:
+            payload = df.http_json(url, params, timeout=timeout)
+        except Exception as exc:  # noqa: BLE001
+            payload = {"error": f"{type(exc).__name__}: {str(exc)[:200]}"}
+        err = payload.get("error")
+        if not err:
+            return payload
+        last = str(err)[:200]
+        if i < tries:
+            log(f"⚠️ {label} 第 {i}/{tries} 次被拒：{last[:110]} → {delay:.0f}s 后重试")
+            time.sleep(delay)
+            delay = min(delay * 2, 30)
+    return {"error": last}
+
+
 # --------------------------------------------------------------------------- 配置档
 def load_roster(path: Path | None = None) -> dict:
     path = path or ROSTER_PATH
@@ -184,9 +215,16 @@ def _nad_bbox_pull(fx: Fetcher, bbox_str: str, fields: list[str], oid: str,
             "resultRecordCount": batch,       # 不再传 resultOffset
             "f": "json",
         }
-        payload = df.http_json(f"{df.NAD_OFFICIAL}/query", params, timeout=fx.args.nad_timeout)
+        payload = _esri_query(f"{df.NAD_OFFICIAL}/query", params, tries=4,
+                              label=f"NAD page {pages + 1}（cursor={cursor} rc={batch}）",
+                              timeout=fx.args.nad_timeout)
         if payload.get("error"):
-            raise RuntimeError(f"query error {str(payload['error'])[:200]} | cursor={cursor} page={pages + 1}")
+            # 连续重试仍被拒 → 单页缩半再试（1000 → 500 → 250 → 125 → 100）
+            if batch > 100:
+                page = max(100, batch // 2)
+                log(f"⚠️ NAD 连续被拒 → 单页缩到 {page} 再试")
+                continue
+            raise RuntimeError(f"query error {str(payload['error'])[:200]} | cursor={cursor} page={pages + 1} rc={batch}")
         feats = payload.get("features") or []
         pages += 1
         if not feats:
@@ -246,9 +284,9 @@ def harvest_nad(fx: Fetcher) -> None:
     if oid not in fields:
         fields = [oid] + fields
     maxrc = int(meta.get("maxRecordCount") or 2000)
-    # 单页不能超过图层 maxRecordCount（否则服务端报 exceeded transfer limit），也不超过探针上限 2000
-    page = int(fx.args.nad_page) if fx.args.nad_page else maxrc
-    page = max(1, min(page, maxrc, 2000))
+    # ★ 单页硬上限 1000：实测 rc=2000（=maxRecordCount）会被 400 拒，rc=1000 稳定返回满页
+    page = int(fx.args.nad_page) if fx.args.nad_page else min(maxrc, 1000)
+    page = max(1, min(page, maxrc, 1000))
     official = _nad_official_count(fx, fx.cfg["bbox_str"])
 
     ndjson = d / f"nad_us_{fx.cfg['state'].lower()}_full.ndjson"
@@ -444,11 +482,13 @@ def _tiger_boundary_queries(cfg: dict) -> list[tuple[str, str, list[tuple[str, s
 
     # ZCTA5 邮编区（本州邮编段）
     if cfg["zcta_lo"] and cfg["zcta_hi"]:
+        # ⚠️ ZCTA 图层的字段里**没有 STATE**（实证：outFields 带 STATE → 400 Failed to execute query；
+        #    该图层实际字段：OID/ZCTA5/GEOID/BASENAME/LSADC/NAME/OBJECTID/…）
+        #    所以这里只用 "ZCTA5,GEOID"；去掉 STATE 后同一个 where 立刻返回 68 个 ZCTA。
         q.append(("zcta",
                   f"{t['tigerweb']}/PUMA_TAD_TAZ_UGA_ZCTA/MapServer/1",
-                  [(f"ZCTA5>='{cfg['zcta_lo']}' AND ZCTA5<='{cfg['zcta_hi']}'",
-                    "ZCTA5,GEOID,STATE", None),
-                   ("1=1", "ZCTA5,GEOID,STATE", f"{cfg['zcta_lo']}:{cfg['zcta_hi']}")]))
+                  [(f"ZCTA5>='{cfg['zcta_lo']}' AND ZCTA5<='{cfg['zcta_hi']}'", "ZCTA5,GEOID", None),
+                   ("1=1", "ZCTA5,GEOID", f"{cfg['zcta_lo']}:{cfg['zcta_hi']}")]))
 
     # 市界（可选）
     pfields = "GEOID,NAME,BASENAME,STATE,PLACE,CENTLAT,CENTLON"
@@ -478,9 +518,10 @@ def harvest_tiger(fx: Fetcher) -> None:
         got, tried = None, []
         for where, fields, local in attempts:
             try:
-                payload = df.http_json(f"{layer}/query", {
+                payload = _esri_query(f"{layer}/query", {
                     "where": where, "outFields": fields, "returnGeometry": "true",
-                    "outSR": "4326", "f": "json"}, timeout=fx.args.tiger_timeout)
+                    "outSR": "4326", "f": "json"}, tries=3, label=f"TIGER {key}",
+                    timeout=fx.args.tiger_timeout)
                 if payload.get("error"):
                     tried.append({"where": where, "esri_error": str(payload["error"])[:160]})
                     continue

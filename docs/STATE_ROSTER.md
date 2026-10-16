@@ -52,15 +52,39 @@ python bots/fetch_state_raw.py --state DE --publish-release
 
 ## 已修的三个实证 Bug
 
-1. **NAD 深分页熔断**：旧版纯 `resultOffset` 翻页，全州在 `offset=8000` 被 Esri 返回
+1. **NAD 深分页熔断（真因不是深度，是服务端抖动）**
+   旧版用纯 `resultOffset` 翻页，全州在 `offset=8000` 被 Esri 返回
    `400 Cannot perform query / Invalid query parameters`，导致整源丢失且工作流不报红。
-   现在改为**游标分页**：`orderByFields=<OID> ASC` + `where="<OID> > last_id"`，深度无上限；
-   另有自愈兜底 —— 若实拉行数少于官方 `returnCountOnly` 的 99%，自动把包围盒切 4 块重拉并按 OID 合并。
-2. **县界空壳**：旧版写成 `COUNTY='10001'`（5 位），而 TIGERweb 县图层字段 `COUNTY` 长度是 3，
-   服务端静默返回 `features: []`，680 字节的空壳还被当资产上传。现在用 3 位
-   `COUNTY='001'`，并配 4 组候选（含"整州取回本地筛"的兜底），**features=0 直接不落盘**。
-3. **无门禁**：新增 `gate()` —— 缺源 / 任何文本产物 <1KB / 边界 features=0 / NAD 行数为 0，
+   2026-10-16 探针复测（同一图层、同一 bbox）得出真相：
+
+   | 请求组合 | 结果 |
+   |---|---|
+   | `resultRecordCount=2` | ✅ |
+   | `resultOffset=0`（不带 orderBy） | ❌ 400 |
+   | `orderByFields=OBJECTID ASC` + rc=2 | ✅ |
+   | `resultRecordCount=2000`（= maxRecordCount） | ❌ 400 |
+   | rc=1000 + `resultOffset=0`（旧代码姿势） | ✅ 返回 1000 条 |
+
+   **同一组参数时好时坏 → 不是深度分页熔断，是联邦视图服务端抖动。**
+   修复 = 三件组合拳：
+   · 改**游标分页**：`orderByFields=<OID> ASC` + `where="<OID> > last_id"`，全程不传 `resultOffset`；
+   · **重试**：`_esri_query()` 指数退避重试 4 次（TIGER 边界 3 次）；
+   · **缩页**：重试仍被拒则单页缩半（1000 → 500 → 250 → 125 → 100）；
+   · 另加**4 分块自愈**：实拉行数少于官方 `returnCountOnly` 的 99% 时，把包围盒切 4 块重拉并按 OID 去重合并。
+   另修一个自研新坑：整页都是重复行时游标不推进 → 反复重拉同一页（自检里真卡死过一次），
+   现已加三条退出阀（本页不满 / 本页无净增 / 游标未前进）。
+
+2. **县界 680 字节空壳**：旧版写成 `COUNTY='10001'`（5 位），而 TIGERweb 县图层字段 `COUNTY` 长度是 3，
+   服务端静默返回 `features: []`，680 字节的空壳还被当资产上传。
+   改成 3 位 `COUNTY='001'` —— **已在真服务上验证通过**（2026-10-16 实跑：三个县界全部非空）。
+   另配 4 组候选重试链（含“整州取回本地筛”兜底），`features=0` 直接不落盘。
+   同批修掉 ZCTA 图层的一个同类坑：该图层**没有 `STATE` 字段**，outFields 带 STATE 会被
+   `400 Failed to execute query` 拒；去掉后同一个 where 返回 68 个 ZCTA。
+
+3. **无门禁**：新增 `gate()` —— 缺源 / 空壳载荷 / 边界 features=0 / NAD 行数为 0，
    一律 `RuntimeError` 阻断发布（退出码 3），杜绝废资产上架。
+   注意空壳判定**走结构不走体积**：合法的列清单 `nad_full_columns.json` 只有 908 字节，
+   而真正的空壳是 680 字节、`features: []` 的 geojson —— 体积一样小，只能靠结构区分。
 
 ## 维护备忘
 

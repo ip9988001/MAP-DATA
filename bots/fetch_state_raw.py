@@ -176,6 +176,12 @@ class Fetcher:
         self.problems: list[str] = []       # 门禁问题（缺源/空壳/边界空）
         self.files: list[Path] = []
         self.cache: dict = {}               # 跨源共享（县界多边形：NAD 切块与 TIGER 导出共用）
+        # ---- 增量发布 / 断点续传（Step 2）----
+        self.publish = False                # True = 边抓边传（分片即传、MANIFEST 最后封印）
+        self.tag = ""                       # 目标 Release tag
+        self.meta: dict = {}                # rel(path) → {bytes, sha256, sha256_head, ...}
+        self.remote: dict = {}              # 远端资产 name → size
+        self.status_doc: dict = {}          # 远端 STATUS.json 内容（断点续传的依据）
 
     # -- 记账 ----------------------------------------------------------------
     def note(self, source: str, status: str, **kw) -> dict:
@@ -1387,7 +1393,22 @@ def _nad_harvest_county_shards(fx: Fetcher, d: Path, fields: list, oid: str,
         if not ids:
             fx.problem(f"NAD 县片为空：{c['name']}（{c['fips']}）官方 count={ccnt}")
             continue
-        path = d / _asset_name("NAD", st, c["fips"], c["key"], ext=".ndjson.gz")
+        fname = _asset_name("NAD", st, c["fips"], c["key"], ext=".ndjson.gz")
+        union |= set(ids)
+        # ★ 断点续传：远端已有该片且大小一致 → 跳过抓取（ids 仍查，因为溢出包要算差集）
+        prevrec = (fx.status_doc.get("assets") or {}).get(fname)
+        if (fx.publish and prevrec and c["fips"] in (fx.status_doc.get("done") or [])
+                and fx.remote.get(fname) == prevrec.get("bytes")):
+            log(f"  ⏭ 断点续传：跳过已完成县片 {fname}")
+            fx.meta[rel(d / fname)] = {"bytes": prevrec.get("bytes"),
+                                       "sha256": prevrec.get("sha256_gz"),
+                                       "sha256_head": str(prevrec.get("sha256_raw") or "")[:16],
+                                       "rows": prevrec.get("rows")}
+            fx.add(d / fname)
+            shards.append(prevrec)
+            state_dist.update(prevrec.get("state_distribution") or {})
+            continue
+        path = d / fname
         sink, close = _gz_open(path)
         seen_l: set = set()
         _nad_fetch_by_ids(fx, ids, fields, oid, sink, seen_l, err_log)
@@ -1399,32 +1420,57 @@ def _nad_harvest_county_shards(fx: Fetcher, d: Path, fields: list, oid: str,
             fx.args.nad_ids_batch = old
             missing = [i for i in ids if i not in seen_l]
         meta = close()
-        fx.add(path)
         dup_rows += max(0, meta["rows"] - len(seen_l))
-        union |= set(ids)
         state_dist.update(meta["state_distribution"])
         ok = (ccnt is None or meta["rows"] == ccnt) and not missing
         if not ok:
             fx.problem(f"NAD 县片对账失败 {c['name']}（{c['fips']}）："
                        f"取 {meta['rows']:,} / 官方 {ccnt} / 缺 {len(missing):,} 主键")
-        shards.append({"kind": "county", "county_fips": c["fips"], "county_key": c["key"],
-                       "county_name": c["name"], "file": rel(path),
-                       "rows": meta["rows"], "expected_rows": ccnt,
-                       "uncompressed_bytes": meta["uncompressed_bytes"],
-                       "gz_bytes": path.stat().st_size,
-                       "sha256_gz": df.sha256_full(path),
-                       "sha256_raw": meta["sha256_raw"],
-                       "state_distribution": meta["state_distribution"],
-                       "missing_ids": len(missing)})
+        rec = {"kind": "county", "county_fips": c["fips"], "county_key": c["key"],
+               "county_name": c["name"], "file": rel(path),
+               "rows": meta["rows"], "expected_rows": ccnt,
+               "uncompressed_bytes": meta["uncompressed_bytes"],
+               "gz_bytes": path.stat().st_size,
+               "sha256_gz": df.sha256_full(path),
+               "sha256_raw": meta["sha256_raw"],
+               "state_distribution": meta["state_distribution"],
+               "missing_ids": len(missing), "bytes": path.stat().st_size}
+        fx.add(path)
+        fx.status_doc.setdefault("assets", {})[fname] = rec
+        if not _checkpoint(fx, path, extra={"rows": rec["rows"], "expected_rows": ccnt}):
+            fx.problem(f"县片上传失败：{fname}")
+        if c["fips"] not in (fx.status_doc.get("done") or []):
+            fx.status_doc.setdefault("done", []).append(c["fips"])
+        _write_status(fx)
+        shards.append(rec)
         log(f"  县片 {c['fips']} {c['key']:<14} 行 {meta['rows']:>8,} / 官方 {ccnt:>8,}"
-            f"｜gz {path.stat().st_size / 1e6:>6.2f} MB")
+            f"｜gz {rec['gz_bytes'] / 1e6:>6.2f} MB")
 
     # 溢出：州 bbox 全集 − 各县并集（纯集合差，绝不重复拉数据）
     over_ids = [i for i in root_ids if i not in union]
+    over_n = len(over_ids)          # ★ 真实溢出主键数（续传跳过时 over_ids 会清空，计数要留住）
     over_meta = {"rows": 0, "uncompressed_bytes": 0, "sha256_raw": None,
                  "state_distribution": {}}
+    over_name = _asset_name("NAD", st, "OUTOFSTATE", ext=".ndjson.gz")
+    prev_over = (fx.status_doc.get("assets") or {}).get(over_name)
+    if (fx.publish and prev_over and "OUTOFSTATE" in (fx.status_doc.get("done") or [])
+            and fx.remote.get(over_name) == prev_over.get("bytes")
+            and prev_over.get("expected_rows") == over_n):
+        log(f"  ⏭ 断点续传：跳过已完成溢出包 {over_name}")
+        fx.meta[rel(d / over_name)] = {"bytes": prev_over.get("bytes"),
+                                       "sha256": prev_over.get("sha256_gz"),
+                                       "sha256_head": str(prev_over.get("sha256_raw") or "")[:16],
+                                       "rows": prev_over.get("rows")}
+        fx.add(d / over_name)
+        shards.append(prev_over)
+        state_dist.update(prev_over.get("state_distribution") or {})
+        over_ids = []
+        over_meta = {"rows": prev_over.get("rows", 0),
+                     "uncompressed_bytes": prev_over.get("uncompressed_bytes", 0),
+                     "sha256_raw": prev_over.get("sha256_raw"),
+                     "state_distribution": prev_over.get("state_distribution") or {}}
     if over_ids:
-        path = d / _asset_name("NAD", st, "OUTOFSTATE", ext=".ndjson.gz")
+        path = d / over_name
         sink, close = _gz_open(path)
         seen_o: set = set()
         _nad_fetch_by_ids(fx, over_ids, fields, oid, sink, seen_o, err_log)
@@ -1440,24 +1486,31 @@ def _nad_harvest_county_shards(fx: Fetcher, d: Path, fields: list, oid: str,
         state_dist.update(over_meta["state_distribution"])
         if missing_o:
             fx.problem(f"NAD 溢出包对账失败：缺 {len(missing_o):,} 主键")
-        shards.append({"kind": "overflow", "county_fips": None, "county_key": "OUTOFSTATE",
-                       "county_name": "不在本州界内的 BBox 溢出点（邻州门牌，供核验用）",
-                       "file": rel(path), "rows": over_meta["rows"],
-                       "expected_rows": len(over_ids),
-                       "uncompressed_bytes": over_meta["uncompressed_bytes"],
-                       "gz_bytes": path.stat().st_size,
-                       "sha256_gz": df.sha256_full(path),
-                       "sha256_raw": over_meta["sha256_raw"],
-                       "state_distribution": over_meta["state_distribution"],
-                       "missing_ids": len(missing_o)})
+        rec = {"kind": "overflow", "county_fips": None, "county_key": "OUTOFSTATE",
+               "county_name": "不在本州界内的 BBox 溢出点（邻州门牌，供核验用）",
+               "file": rel(path), "rows": over_meta["rows"],
+               "expected_rows": len(over_ids),
+               "uncompressed_bytes": over_meta["uncompressed_bytes"],
+               "gz_bytes": path.stat().st_size,
+               "sha256_gz": df.sha256_full(path),
+               "sha256_raw": over_meta["sha256_raw"],
+               "state_distribution": over_meta["state_distribution"],
+               "missing_ids": len(missing_o), "bytes": path.stat().st_size}
+        fx.status_doc.setdefault("assets", {})[over_name] = rec
+        fx.status_doc.setdefault("done", []).append("OUTOFSTATE")
+        if not _checkpoint(fx, path, extra={"rows": rec["rows"],
+                                           "expected_rows": rec["expected_rows"]}):
+            fx.problem(f"溢出包上传失败：{over_name}")
+        _write_status(fx)
+        shards.append(rec)
         log(f"  溢出包 OUTOFSTATE 行 {over_meta['rows']:>8,} / 应得 {len(over_ids):>8,}"
-            f"｜gz {path.stat().st_size / 1e6:>6.2f} MB")
+            f"｜gz {rec['gz_bytes'] / 1e6:>6.2f} MB")
 
     # ---- 三数咬合 ----
-    covered = len(union) + len(over_ids)
+    covered = len(union) + over_n
     total_rows = sum(s["rows"] for s in shards)
     if official is not None and covered != official:
-        fx.problem(f"NAD 三数不咬合：县并集 {len(union):,} + 溢出 {len(over_ids):,}"
+        fx.problem(f"NAD 三数不咬合：县并集 {len(union):,} + 溢出 {over_n:,}"
                    f" = {covered:,} ≠ 州官方 {official:,}")
     if total_rows - dup_rows != covered:
         fx.problem(f"NAD 分片行数不咬合：Σ行 {total_rows:,} − 县界重复 {dup_rows:,}"
@@ -1469,7 +1522,7 @@ def _nad_harvest_county_shards(fx: Fetcher, d: Path, fields: list, oid: str,
             fetch_strategy="OID 区间二分取主键 → 县多边形切片 → objectIds 批取 → gzip 落盘",
             official_count=official, official_ids=len(root_ids),
             shard_count=len([s for s in shards if s["kind"] == "county"]),
-            overflow_rows=over_meta["rows"], overflow_ids=len(over_ids),
+            overflow_rows=over_meta["rows"], overflow_ids=over_n,
             boundary_duplicate_rows=dup_rows, total_rows=total_rows,
             coverage_pct=(round(100.0 * covered / official, 2) if official else None),
             ids_queries=ost["queries"], ids_splits=ost["splits"],
@@ -1531,9 +1584,27 @@ def _apply_naming(fx: Fetcher) -> None:
     for p in list(fx.files):
         if p.name in mapping:
             dst = p.with_name(mapping[p.name])
-            if dst != p:
+            if p.exists() and dst != p:
                 os.replace(p, dst)
     fx.files = [p.with_name(mapping.get(p.name, p.name)) for p in fx.files]
+
+    # 已经上传并删除本地的文件：只改记账键与 STATUS 索引（文件已不在磁盘上）
+    def _rename_path(relp: str) -> str:
+        head, _, base = relp.rpartition("/")
+        if base in mapping:
+            return (head + "/" if head else "") + mapping[base]
+        return relp
+
+    fx.meta = {_rename_path(k): v for k, v in fx.meta.items()}
+    assets = fx.status_doc.get("assets") or {}
+    if assets:
+        fixed = {}
+        for name, rec in assets.items():
+            r = dict(rec)
+            if isinstance(r.get("file"), str):
+                r["file"] = _rename_path(r["file"])
+            fixed[mapping.get(name, name)] = r
+        fx.status_doc["assets"] = fixed
 
     def rewrite(obj):
         if isinstance(obj, dict):
@@ -1547,6 +1618,148 @@ def _apply_naming(fx: Fetcher) -> None:
     fx.status = rewrite(fx.status)
     fx.ledger = rewrite(fx.ledger)
     log(f"命名统一完成：{len(mapping)} 个资产改为 {{源}}-US-{st}-... 口径")
+
+
+# --------------------------------------------------------------------------- 增量发布 / 断点续传
+STATUS_NAME = "STATUS.json"
+SEAL_NAME = "MANIFEST.json"
+
+
+def _now() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _gh_env():
+    tok = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+    if not tok or not os.environ.get("GITHUB_REPOSITORY"):
+        return None
+    return {**os.environ, "GH_TOKEN": tok}
+
+
+def _gh(args: list, timeout: int = 3600) -> subprocess.CompletedProcess:
+    env = _gh_env()
+    if env is None:
+        raise RuntimeError("缺少 GITHUB_TOKEN / GITHUB_REPOSITORY")
+    return subprocess.run(["gh", *args], capture_output=True, text=True, env=env, timeout=timeout)
+
+
+def gh_ensure_release(tag: str) -> None:
+    """先建空 Release（不带 --latest，避免 51 州互相抢 latest 标签）。"""
+    if _gh(["release", "view", tag, "--json", "tagName"]).returncode == 0:
+        log(f"Release 已存在，按断点续传模式继续：{tag}")
+        return
+    r = _gh(["release", "create", tag, "--title", tag, "--latest=false",
+             "--notes", "**采集中**：进度见 `STATUS.json`；`MANIFEST.json` 出现即代表交付完成。"])
+    if r.returncode != 0:
+        raise RuntimeError(f"创建 Release 失败：{(r.stderr or '')[:300]}")
+    log(f"已创建空 Release：{tag}")
+
+
+def gh_assets(tag: str) -> dict:
+    r = _gh(["release", "view", tag, "--json", "assets"])
+    if r.returncode != 0:
+        return {}
+    try:
+        return {a["name"]: a["size"] for a in (json.loads(r.stdout or "{}").get("assets") or [])}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def gh_upload(tag: str, path: Path, clobber: bool = False) -> bool:
+    args = ["release", "upload", tag, str(path)]
+    if clobber:
+        args.append("--clobber")
+    r = _gh(args)
+    if r.returncode != 0:
+        log(f"⚠️ 上传失败 {path.name}：{(r.stderr or '')[:200]}")
+        return False
+    return True
+
+
+def gh_read_asset_text(tag: str, name: str) -> str | None:
+    env = _gh_env()
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    r = subprocess.run(["gh", "api", f"repos/{repo}/releases/tags/{tag}",
+                        "--jq", '.assets[]|"\(.id)\t\(.name)"'],
+                       capture_output=True, text=True, env=env)
+    for line in (r.stdout or "").splitlines():
+        if "\t" not in line:
+            continue
+        aid, aname = line.split("\t", 1)
+        if aname.strip() != name:
+            continue
+        r2 = subprocess.run(["gh", "api", "-H", "Accept: application/octet-stream",
+                             f"repos/{repo}/releases/assets/{aid.strip()}"],
+                            capture_output=True, text=True, env=env)
+        if r2.returncode == 0:
+            return r2.stdout
+    return None
+
+
+def _write_status(fx: Fetcher) -> None:
+    """STATUS.json 是**过程态**：唯一允许 --clobber 覆盖的资产。"""
+    doc = fx.status_doc
+    doc.update({"schema": "state-release-status/v1", "state": fx.cfg["state"], "tag": fx.tag,
+                "generator": "bots/fetch_state_raw.py",
+                "started_at": doc.get("started_at") or _now(),
+                "updated_at": _now()})
+    doc.setdefault("phase", "collecting")
+    doc.setdefault("expected", [])
+    doc.setdefault("done", [])
+    doc.setdefault("assets", {})
+    p = fx.out / STATUS_NAME
+    p.write_text(json.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8")
+    if fx.publish:
+        gh_upload(fx.tag, p, clobber=True)
+    p.unlink(missing_ok=True)
+
+
+def _checkpoint(fx: Fetcher, path: Path, extra: dict | None = None,
+                clobber: bool = False, delete: bool = True) -> bool:
+    """单个文件 → 记账 → 上传 → 核对远端 size → 本地删除。数据资产绝不 clobber。"""
+    r = rel(path)
+    m = {"bytes": path.stat().st_size, "sha256": df.sha256_full(path),
+         "sha256_head": df.sha256_head(path)}
+    if extra:
+        m.update(extra)
+    fx.meta[r] = m
+    if not fx.publish:
+        return True
+    size = m["bytes"]
+    name = path.name
+    if not clobber and fx.remote.get(name) == size:
+        log(f"  ⏭ 远端已存在且大小一致，跳过：{name}")
+    else:
+        if not gh_upload(fx.tag, path, clobber=clobber):
+            return False
+        remote = gh_assets(fx.tag).get(name)
+        if remote != size:
+            log(f"⚠️ 远端大小不符（{remote} != {size}），重传一次：{name}")
+            if not gh_upload(fx.tag, path, clobber=True):
+                return False
+            remote = gh_assets(fx.tag).get(name)
+            if remote != size:
+                fx.problem(f"上传校验失败：{name} 远端 {remote} != 本地 {size}")
+                return False
+        fx.remote[name] = size
+        log(f"  ⬆ 已上传 {name}（{size / 1e6:.2f} MB）")
+    if delete:
+        path.unlink(missing_ok=True)
+    return True
+
+
+def _checkpoint_others(fx: Fetcher) -> None:
+    """把当前所有**已抓完但还没上传**的非分片文件立刻传走并删本地（Overture/TIGER/OA…）。"""
+    if not fx.publish:
+        return
+    _apply_naming(fx)          # 先统一命名，再上传 —— 否则远端会留下旧口径文件名
+    for p in list(fx.files):
+        if not p.exists() or p.name in (STATUS_NAME, SEAL_NAME, "RELEASE_NOTES.md"):
+            continue
+        if p.name.endswith(".ndjson.gz"):
+            continue                      # 县片由 shard 循环自己上传
+        _checkpoint(fx, p)
+
 
 # --------------------------------------------------------------------------- 门禁 / 打包
 def _asset_sanity(p: Path) -> str | None:
@@ -1602,6 +1815,16 @@ def gate(fx: Fetcher) -> None:
         errs.append(f"州码 {iso['iso_3166_2']} 不在 ISO 3166-2 注册表"
                     f"（rules/geo/global_admin_registry.json）")
     for p in fx.files:
+        if not p.exists():                       # 已随抓随传并删本地 → 只能按记账字节查
+            m = fx.meta.get(rel(p)) or {}
+            b = m.get("bytes")
+            if b is None:
+                errs.append(f"资产既不在本地也无上传记账：{rel(p)}")
+            elif p.suffix.lower() in PAYLOAD_SUFFIXES and b < MIN_ASSET_BYTES:
+                errs.append(f"过小产物（{b}B < {MIN_ASSET_BYTES}B）：{rel(p)}")
+            elif str(p).endswith(".ndjson.gz") and not (m.get("rows") or 0):
+                errs.append(f"分片行数为 0：{rel(p)}")
+            continue
         bad = _asset_sanity(p)
         if bad:
             errs.append(f"{bad}：{rel(p)}")
@@ -1703,8 +1926,13 @@ def build_completeness(fx: Fetcher) -> dict:
 
 def build_manifest(fx: Fetcher) -> Path:
     def asset(p: Path) -> dict:
-        return {"path": rel(p), "bytes": p.stat().st_size,
-                "sha256": df.sha256_full(p), "sha256_head": df.sha256_head(p)}
+        r = rel(p)
+        if p.exists():
+            return {"path": r, "bytes": p.stat().st_size,
+                    "sha256": df.sha256_full(p), "sha256_head": df.sha256_head(p)}
+        m = fx.meta.get(r) or {}
+        return {"path": r, "bytes": m.get("bytes"), "sha256": m.get("sha256"),
+                "sha256_head": m.get("sha256_head")}
 
     def row_counts() -> dict:
         """每个数据产物可数的行/记录数（按资产路径给，数不了就不写）。"""
@@ -1914,6 +2142,22 @@ def main(argv: list[str] | None = None) -> int:
         f"BBox {cfg['bbox_str']}｜tag={tag}｜nad_mode={args.nad_mode}｜out={rel(out)}")
 
     fx = Fetcher(cfg, out, args)
+    publishing = bool(args.publish_release) and not args.no_release and _gh_env() is not None
+    fx.publish, fx.tag = publishing, tag
+    if publishing:
+        try:
+            gh_ensure_release(tag)
+            fx.remote = gh_assets(tag)
+            txt = gh_read_asset_text(tag, STATUS_NAME)
+            if txt:
+                fx.status_doc = json.loads(txt)
+                fx.status_doc.setdefault("phase", "collecting")
+            fx.status_doc.setdefault("expected", [c["fips"] for c in cfg["counties"]])
+            log(f"增量发布：tag={tag}｜远端已有资产 {len(fx.remote)} 个｜"
+                f"已完成分片 {len(fx.status_doc.get('done') or [])} 个")
+        except Exception as exc:  # noqa: BLE001
+            log(f"⚠️ 增量发布初始化失败（回落为跑完一次性发布）：{exc}")
+            publishing = fx.publish = False
     only = {s.strip() for s in args.only.split(",") if s.strip()}
     jobs = [("nad", harvest_nad), ("overture", harvest_overture),
             ("openaddresses", harvest_openaddresses), ("census_tiger", harvest_tiger)]
@@ -1926,6 +2170,7 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:  # noqa: BLE001 单源失败不拖垮整轮，但如实记账
             fx.note(name, "exception", error=f"{type(exc).__name__}: {str(exc)[:400]}")
             fx.problem(f"源 {name} 抛异常：{type(exc).__name__}: {str(exc)[:200]}")
+        _checkpoint_others(fx)          # 每源跑完立刻把已产出文件传走并删本地
 
     if getattr(args, "pack_mode", "single") != "single":
         _apply_naming(fx)
@@ -1934,7 +2179,8 @@ def main(argv: list[str] | None = None) -> int:
     fx.files.append(manifest)
     notes = release_notes(manifest, fx, tag)
     fx.files.append(notes)
-    total = sum(p.stat().st_size for p in fx.files)
+    total = sum((p.stat().st_size if p.exists() else (fx.meta.get(rel(p)) or {}).get("bytes") or 0)
+                for p in fx.files)
     log(f"产物 {len(fx.files)} 个，合计 {total / 1e6:.1f} MB")
     log("各源状态：" + json.dumps({k: v.get("status") for k, v in fx.status.items()}, ensure_ascii=False))
 
@@ -1948,7 +2194,18 @@ def main(argv: list[str] | None = None) -> int:
     if args.no_release or not args.publish_release:
         log("（--no-release 或未指定 --publish-release）跳过上架")
         return 0
-    create_release(fx.files, notes, tag)
+    if not fx.publish:                  # 没有 token/仓库信息 → 老路径：一次性发布
+        create_release(fx.files, notes, tag)
+        return 0
+    # ★ 封印：MANIFEST 最后上传（唯一允许 clobber 的终态文件），然后 STATUS 标 complete
+    if not _checkpoint(fx, manifest, clobber=True, delete=False):
+        log("❌ MANIFEST 封印上传失败")
+        return 4
+    _checkpoint(fx, notes, clobber=True, delete=False)
+    fx.status_doc["phase"] = "complete"
+    fx.status_doc["completed_at"] = _now()
+    _write_status(fx)
+    log("✅ 已封印：MANIFEST.json 上架，STATUS.phase=complete")
     log("完成：" + json.dumps({k: v.get("status") for k, v in fx.status.items()}, ensure_ascii=False))
     return 0
 

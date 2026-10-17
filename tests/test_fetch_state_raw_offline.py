@@ -17,6 +17,8 @@
   S8 四源自证 + 元数据   → MANIFEST 的 completeness（四源对账）/ quality（State 分布）/
                             row_counts / 全文 sha256 全部到位（P0+P2）
   S9 OID 区间二分        → 主键清单撞 400k 上限时按 OBJECTID 区间二分补齐（v1 通用切法）
+  S11 增量发布 + 断点续传 → STATUS.json 过程态 / 分片即传即删 / MANIFEST 最后封印 /
+                            重跑零批取（全命中断点）
   S10 按县切片 + gzip    → 每个县一个 gz 分片 + 溢出包；州总量 == Σ县片 + 溢出（三数咬合）；
                             命名统一为 NAD/TIGER/OA/OVERTURE-US-{州}-...
 """
@@ -269,9 +271,10 @@ def setup(official=5, main_pool=None, shard_pool=None, county_ok=True,
     fs.shutil.which = lambda name: str(FAKE_CLI)
 
 
-def scenario(name, out, mode="cursor", shards="none", extra=None, **kw):
+def scenario(name, out, mode="cursor", shards="none", extra=None, publish=False, **kw):
     setup(**kw)
-    argv = ["--state", "DE", "--out-dir", str(out), "--no-release",
+    argv = ["--state", "DE", "--out-dir", str(out)] + (
+        ["--publish-release"] if publish else ["--no-release"]) + [
             "--overture-format", "parquet", "--nad-mode", mode, "--nad-shards", shards]
     argv += (extra or [])
     rc = fs.main(argv)
@@ -280,6 +283,21 @@ def scenario(name, out, mode="cursor", shards="none", extra=None, **kw):
     for p in files:
         print(f"   {p.stat().st_size:>9,}  {p.relative_to(out)}")
     return rc, files
+
+
+STORE: dict = {}          # 假的远端 Release：name -> bytes
+
+
+def install_fake_release():
+    STORE.clear()
+    fs._gh_env = lambda: {"GH_TOKEN": "fake", "GITHUB_REPOSITORY": "fake/repo"}
+    fs.gh_ensure_release = lambda tag: STORE.setdefault("_tag", tag)
+    fs.gh_assets = lambda tag: {k: len(v) for k, v in STORE.items() if not k.startswith("_")}
+    fs.gh_upload = lambda tag, path, clobber=False: (
+        False if (path.name in STORE and not clobber) else
+        (STORE.__setitem__(path.name, path.read_bytes()) or True))
+    fs.gh_read_asset_text = lambda tag, name: (
+        STORE[name].decode("utf-8") if isinstance(STORE.get(name), (bytes, bytearray)) else STORE.get(name))
 
 
 def nad_of(out):
@@ -482,8 +500,59 @@ def main():
     bad10 = [k for k, v in res10.items() if not v]
     print("S10 判定：", "✅ 通过" if results["S10"] else f"❌ 失败 {bad10}")
 
+    # ---------- S11 增量发布 + 断点续传（Step 2）----------
+    install_fake_release()
+    rc11, _ = scenario("S11 增量发布(首跑)", base / "s11", mode="ids", official=7,
+                       main_pool=[], ids_target=range(1, 8),
+                       poly_pools={"001": [1, 2], "003": [3, 4], "005": [5]},
+                       publish=True,
+                       extra=["--pack-mode", "county_shards", "--nad-ids-slicing", "oid",
+                              "--nad-ids-batch", "10"])
+    st11 = json.loads(STORE.get("STATUS.json", b"{}").decode("utf-8"))
+    local_gz = list((base / "s11" / "nad").glob("*.ndjson.gz"))
+    first_batches = [c for c in CALLS["post"] if c["kind"] == "batch"]
+    r1 = {
+        "首跑成功": rc11 == 0,
+        "STATUS采集完成": st11.get("phase") == "complete",
+        "状态机字段": all(k in st11 for k in ("expected", "done", "assets")),
+        "三县已标记": len([d for d in st11.get("done") or []]) >= 3,
+        "分片已上传": all(n in STORE for n in ("NAD-US-DE-10001-kent.ndjson.gz",
+                                              "NAD-US-DE-10003-new_castle.ndjson.gz",
+                                              "NAD-US-DE-10005-sussex.ndjson.gz",
+                                              "NAD-US-DE-OUTOFSTATE.ndjson.gz")),
+        "本地已清理": not local_gz,
+        "MANIFEST已封印": "MANIFEST.json" in STORE,
+        "首跑有批取": len(first_batches) > 0,
+    }
+    # 第二跑：全部命中断点，不应再发 objectIds 批取
+    rc12, _ = scenario("S11 断点续传(重跑)", base / "s11b", mode="ids", official=7,
+                       main_pool=[], ids_target=range(1, 8),
+                       poly_pools={"001": [1, 2], "003": [3, 4], "005": [5]},
+                       publish=True,
+                       extra=["--pack-mode", "county_shards", "--nad-ids-slicing", "oid",
+                              "--nad-ids-batch", "10"])
+    second_batches = [c for c in CALLS["post"] if c["kind"] == "batch"]
+    st12 = json.loads(STORE.get("STATUS.json", b"{}").decode("utf-8"))
+    man12 = json.loads((base / "s11b" / "MANIFEST.json").read_text(encoding="utf-8"))
+    r2 = {
+        "重跑成功": rc12 == 0,
+        "零批取(全跳过)": len(second_batches) == 0,
+        "分片仍在": len(man12.get("shards") or []) == 4,
+        "行数未变": sum(x.get("rows", 0) for x in man12.get("shards") or []) == 7,
+        "STATUS仍完整": st12.get("phase") == "complete",
+        "资产未被重传覆盖": len([k for k in STORE if k.startswith("NAD-US-") and k.endswith(".ndjson.gz")]) == 4,
+        "其它源也是新命名": all(
+            not k.startswith(("tiger_", "tl_2024_", "openaddresses_", "overture_"))
+            for k in STORE if k.endswith((".zip", ".geojson", ".parquet", ".json", ".log"))),
+    }
+    results["S11"] = all(r1.values()) and all(r2.values())
+    print(f"  首跑: {r1}")
+    print(f"  重跑: {r2}")
+    bad11 = [k for k, v in {**r1, **r2}.items() if not v]
+    print("S11 判定：", "✅ 通过" if results["S11"] else f"❌ 失败 {bad11}")
+
     shutil.rmtree(base, ignore_errors=True)
-    print("\n总判定：", "✅ 十个场景全部符合预期" if all(results.values()) else f"❌ {results}")
+    print("\n总判定：", "✅ 十一个场景全部符合预期" if all(results.values()) else f"❌ {results}")
     return 0 if all(results.values()) else 1
 
 

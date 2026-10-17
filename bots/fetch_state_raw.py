@@ -38,6 +38,7 @@ import shutil
 import subprocess
 import sys
 import time
+from collections import Counter
 import zipfile
 import urllib.error
 import urllib.parse
@@ -699,11 +700,12 @@ def harvest_nad(fx: Fetcher) -> None:
             repair = {"tiles": 4, "pages": extra_pages, "rows_added": extra_rows, "after": added}
 
         truncated = bool(official) and added < int(official)
+        scan = _scan_nad_ndjson(ndjson, fx.cfg["state"])
         fx.add(d / "nad_native_metadata.json", ndjson)
         fx.note("nad", "warn-truncated" if truncated else "ok", channel="A-official-rest",
                 mode="cursor", pagination=f"cursor: orderByFields={oid} ASC",
                 shard_mode=fx.args.nad_shards, shard_count=len(shards), workers=workers,
-                shard_detail=shard_detail, page_size=page, repair=repair,
+                shard_detail=shard_detail, page_size=page, repair=repair, **scan,
                 rows_fetched=added, official_count_in_bbox=official, truncated=truncated,
                 bytes=ndjson.stat().st_size, elapsed=round(time.time() - t0, 1))
         if truncated:
@@ -764,6 +766,7 @@ def harvest_nad(fx: Fetcher) -> None:
                    ensure_ascii=False, indent=1), encoding="utf-8")
     got = len(seen)
     truncated = bool(missing)
+    scan = _scan_nad_ndjson(ndjson, fx.cfg["state"])
     fx.add(d / "nad_native_metadata.json", ndjson, d / "nad_full_columns.json")
     if err_log.exists() and err_log.stat().st_size > 0:
         fx.add(err_log)
@@ -778,6 +781,7 @@ def harvest_nad(fx: Fetcher) -> None:
             ids_leaves=id_stats["leaves"], ids_cap_hits=id_stats["cap_hits"],
             ids_requests=id_stats["requests"], ids_max_depth=id_stats["max_depth"],
             official_ids=len(target), rows_fetched=got, missing_ids=len(missing),
+            **scan,
             missing_sample=[str(i) for i in missing[:5]],
             truncated=truncated, streamed_to=rel(ndjson), fields_n=len(fields),
             bytes=ndjson.stat().st_size, elapsed=round(time.time() - t0, 1))
@@ -809,6 +813,13 @@ def harvest_overture(fx: Fetcher) -> None:
     d = fx.dir("overture")
     state_lc = fx.cfg["state"].lower()
     bbox = fx.cfg["bbox_str"]
+    cli_version = ""
+    try:
+        v = subprocess.run([cli, "--version"], capture_output=True, text=True, timeout=120)
+        cli_version = ((v.stdout or "") + (v.stderr or "")).strip().splitlines()[0][:80]
+    except Exception:  # noqa: BLE001
+        cli_version = ""
+    release = ""
 
     # 优先 parquet（流式、不做 json.loads 全量进内存），失败自动回落 geojson
     prefs = ["parquet", "geojson"] if fx.args.overture_format == "parquet" else ["geojson"]
@@ -823,6 +834,8 @@ def harvest_overture(fx: Fetcher) -> None:
                       "bytes": cand.stat().st_size if cand.exists() else 0, "tail": tail[-200:]})
         if ok:
             target, used = cand, fmt
+            m = re.search(r"(\d{4}-\d{2}-\d{2}(?:\.\d+)?)", (proc.stdout or "") + (proc.stderr or ""))
+            release = m.group(1) if m else ""
             break
         if cand.exists():
             cand.unlink()          # 不留下半成品/空壳
@@ -840,12 +853,42 @@ def harvest_overture(fx: Fetcher) -> None:
 
     fx.add(target)
     fx.note("overture", "ok", bbox=bbox, format=used, features=feats,
+            cli_version=cli_version, overture_release=release, feature_file=rel(target),
             bytes=target.stat().st_size, tries=tries, elapsed=round(time.time() - t0, 1))
     if feats == 0:
         fx.problem("Overture 产物 features=0")
 
 
 # --------------------------------------------------------------------------- C. OpenAddresses
+def _scan_nad_ndjson(path: Path, state_code: str) -> dict:
+    """一遍流式扫描 NAD 产物：行数 + State 分布（**只读观察，不改数据**）。
+
+    为什么写进元数据：BBox 是矩形，必然把邻州边角门牌包进来。下游看一眼
+    `state_distribution` 就知道这个包里纯本州数据到底多少条，不用去解 800MB。
+
+    ★ 用正则抠字符串而不是 json.loads：这里只要两个字段，千万行级别差几倍 CPU。
+    """
+    rows = 0
+    states: Counter = Counter()
+    pat = re.compile(r'"State"\s*:\s*"([^"]*)"')
+    try:
+        with path.open(encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if not line.strip():
+                    continue
+                rows += 1
+                m = pat.search(line)
+                states[m.group(1) if m else ""] += 1
+    except Exception as exc:  # noqa: BLE001
+        return {"rows": 0, "state_distribution": {}, "scan_error": str(exc)[:150]}
+    dist = dict(states.most_common())
+    in_scope = states.get(state_code, 0)
+    return {"rows": rows, "state_distribution": dist,
+            "state_in_scope_rows": in_scope,
+            "state_in_scope_pct": round(100.0 * in_scope / rows, 2) if rows else None,
+            "state_blank_rows": states.get("", 0)}
+
+
 def _count_zip_rows(blob: bytes) -> int:
     n = 0
     try:
@@ -1111,7 +1154,13 @@ def harvest_tiger(fx: Fetcher) -> None:
                     hlen = int.from_bytes(b[8:10], "little")
                     names = [b[32 + i * 32:32 + i * 32 + 11].split(b"\x00")[0].decode()
                              for i in range((hlen - 33) // 32)]
-                    detail.append({"file": addrfeat.name, "dbf_records": nrec, "dbf_fields": names})
+                    # .shx 记录数 = (文件长度-100)/8：与 .dbf 头对账，防止半载包
+                    shx = next((n for n in zf.namelist() if n.endswith(".shx")), None)
+                    shx_rec = ((zf.getinfo(shx).file_size - 100) // 8) if shx else None
+                    detail.append({"file": addrfeat.name, "dbf_records": nrec,
+                                   "shx_records": shx_rec,
+                                   "records_match": (shx_rec is None or shx_rec == nrec),
+                                   "dbf_fields_n": len(names), "dbf_fields": names})
         except Exception as exc:  # noqa: BLE001
             detail.append({"file": addrfeat.name, "dbf_error": str(exc)[:150]})
 
@@ -1167,6 +1216,11 @@ def gate(fx: Fetcher) -> None:
     oc, rf = nad.get("official_count"), nad.get("rows_fetched")
     if isinstance(oc, int) and isinstance(rf, int) and rf != oc:
         errs.append(f"NAD 覆盖不全：已取 {rf:,} ≠ 官方 {oc:,}（{rf / oc:.1%}）")
+    # ★ 第三把锁：TIGER 空间包双头对账（.dbf 记录数 vs .shx 记录数），防半载包
+    for d in ((fx.status.get("census_tiger") or {}).get("detail") or []):
+        if isinstance(d, dict) and d.get("records_match") is False:
+            errs.append(f"TIGER 半载包：{d.get('file')} dbf={d.get('dbf_records')} "
+                        f"≠ shx={d.get('shx_records')}")
     for p in fx.files:
         bad = _asset_sanity(p)
         if bad:
@@ -1175,11 +1229,105 @@ def gate(fx: Fetcher) -> None:
         raise RuntimeError("发布门禁未通过，共 %d 项：\n  - %s" % (len(errs), "\n  - ".join(errs)))
 
 
+def build_completeness(fx: Fetcher) -> dict:
+    """★ 四源「自证完整」：逐源给出【上游声明值 vs 本地产出】对照，不只说“下载完成”。
+
+    设计原则：**只记录事实，不改数据**。ok=False 表示该源没有可对账的上游基准
+    （而不是数据有问题），原因写在 method/reason 里，由下游自己判断。
+    """
+    st = fx.status
+    nad = st.get("nad") or {}
+    ov = st.get("overture") or {}
+    oa = st.get("openaddresses") or {}
+    tg = st.get("census_tiger") or {}
+
+    nad_claim = nad.get("official_count")
+    if nad_claim is None:
+        nad_claim = nad.get("official_count_in_bbox")
+    nad_rows = nad.get("rows_fetched")
+    oa_files = [d for d in (oa.get("detail") or []) if isinstance(d, dict) and d.get("file")]
+    oa_rows = sum(int(d.get("native_rows") or 0) for d in oa_files)
+    addr = [d for d in (tg.get("detail") or [])
+            if isinstance(d, dict) and d.get("dbf_records") is not None]
+    addr_rows = sum(int(d["dbf_records"]) for d in addr)
+    boundary = [d for d in (tg.get("detail") or [])
+                if isinstance(d, dict) and not d.get("dbf_records") and d.get("features") is not None]
+
+    return {
+        "note": "可证明完整性：上游声明值 vs 本地产出。只记录事实，不修改任何数据。",
+        "nad": {
+            "channel": "USDOT NAD / Esri GeoServices REST",
+            "acquire_mode": nad.get("mode"),
+            "upstream_declared_rows": nad_claim,
+            "local_rows": nad_rows,
+            "local_unique_ids": nad.get("official_ids"),
+            "coverage_pct": nad.get("coverage_pct"),
+            "method": ("returnCountOnly(同一 BBox) == returnIdsOnly 全集 == 落盘行数"
+                       if nad.get("mode") == "ids" else "returnCountOnly == 去重后行数"),
+            "evidence_1_full": bool(nad_claim) and nad_rows == nad_claim,
+        },
+        "overture": {
+            "channel": "Overture Maps CLI（云端按 bbox 切）",
+            "upstream_declared_rows": None,
+            "local_rows": ov.get("features"),
+            "release": ov.get("overture_release"),
+            "cli_version": ov.get("cli_version"),
+            "method": "CLI 不返回 bbox 级官方行数声明 → 只能自证“文件非空 + feature 可数”",
+            "evidence_1_full": bool(ov.get("features")),
+        },
+        "openaddresses": {
+            "channel": "OpenAddresses runs/{run}/us/{st}/{src}.zip",
+            "upstream_declared_rows": None,
+            "local_rows": oa_rows,
+            "files": [{"file": os.path.basename(str(d.get("file"))), "run": d.get("run"),
+                       "src": d.get("src"), "rows": d.get("native_rows")} for d in oa_files],
+            "method": ("OA 逐源不公开行数声明（/runs/{run}/us/{st}/{src}.json 实测 404）"
+                       " → 记录 run id + 包内实标行数，可溯源重下比对"),
+            "evidence_1_full": bool(oa_files) and oa_rows > 0,
+        },
+        "census_tiger": {
+            "channel": "TIGERweb REST（边界）+ TIGER/Line 号段包",
+            "upstream_declared_rows": None,
+            "local_rows": addr_rows,
+            "addrfeat_files": [{"file": d.get("file"), "dbf_records": d.get("dbf_records"),
+                                "shx_records": d.get("shx_records"),
+                                "records_match": d.get("records_match")} for d in addr],
+            "boundary_layers": len(boundary),
+            "missed": len(tg.get("missed") or []),
+            "method": "空间包自身双头对账：.dbf 记录数 == .shx 记录数（防半载包）；边界层非空即存",
+            "evidence_1_full": (not (tg.get("missed") or [])) and addr_rows > 0
+                               and all(d.get("records_match") is not False for d in addr),
+        },
+    }
+
+
 def build_manifest(fx: Fetcher) -> Path:
     def asset(p: Path) -> dict:
         return {"path": rel(p), "bytes": p.stat().st_size,
-                "sha256": df.sha256_head(p)}
+                "sha256": df.sha256_full(p), "sha256_head": df.sha256_head(p)}
+
+    def row_counts() -> dict:
+        """每个数据产物可数的行/记录数（按资产路径给，数不了就不写）。"""
+        byname: dict = {}
+        for s in fx.status.values():
+            if s.get("source") == "nad" and s.get("rows_fetched"):
+                byname[f"nad_us_{fx.cfg['state'].lower()}_full.ndjson"] = s["rows_fetched"]
+            if (s.get("source") == "overture" and s.get("features") is not None
+                    and s.get("feature_file")):
+                byname[os.path.basename(str(s["feature_file"]))] = s["features"]
+            for d in (s.get("detail") or []):
+                if not isinstance(d, dict) or not d.get("file"):
+                    continue
+                n = os.path.basename(str(d["file"]))
+                if d.get("native_rows") is not None:
+                    byname[n] = d["native_rows"]
+                elif d.get("dbf_records") is not None:
+                    byname[n] = d["dbf_records"]
+        return {rel(p): byname[os.path.basename(p)] for p in fx.files
+                if os.path.basename(p) in byname}
+
     cfg = fx.cfg
+    nad_st = fx.status.get("nad") or {}
     m = {
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "runner": os.environ.get("GITHUB_RUN_ID", "local"),
@@ -1189,7 +1337,17 @@ def build_manifest(fx: Fetcher) -> Path:
                   "state_fips": cfg["state_fips"], "bbox": cfg["bbox"],
                   "counties": [{"key": c["key"], "fips": c["fips"], "name": c["name"]} for c in cfg["counties"]],
                   "note": "四源全量【原始】数据 —— 未做任何清洗 / 去重 / 过滤 / 裁剪"},
+        "integrity": {"sha256": "整个文件的 sha256",
+                      "sha256_head": "前 1MB 的 sha256 前 16 位（快检用）"},
         "assets": [asset(p) for p in sorted(fx.files)],
+        "row_counts": row_counts(),
+        "completeness": build_completeness(fx),
+        "quality": {"note": "只读统计，不做裁剪：BBox 是矩形，必然包含邻州边角门牌",
+                    "state_distribution": nad_st.get("state_distribution"),
+                    "state_in_scope_rows": nad_st.get("state_in_scope_rows"),
+                    "state_in_scope_pct": nad_st.get("state_in_scope_pct"),
+                    "state_blank_rows": nad_st.get("state_blank_rows"),
+                    "nad_rows_scanned": nad_st.get("rows")},
         "sources": list(fx.status.values()),
         "ledger": fx.ledger,
     }
@@ -1222,19 +1380,43 @@ def release_notes(manifest_path: Path, fx: Fetcher, tag: str) -> Path:
     for s in m["sources"]:
         for dd in (s.get("detail") or []):
             if isinstance(dd, dict) and dd.get("file"):
-                detail_by_file[dd["file"]] = dd
+                detail_by_file[os.path.basename(str(dd["file"]))] = dd
+    rc = m.get("row_counts") or {}
     for a in m["assets"]:
-        dd = detail_by_file.get(a["path"], {})
+        n = rc.get(a["path"])
         extra = ""
-        if dd.get("native_rows"):
-            extra = f"{dd['native_rows']:,} 行"
-        elif dd.get("features"):
-            extra = f"{dd['features']:,} feature"
-        elif dd.get("bytes"):
-            extra = ""
+        if isinstance(n, int):
+            extra = f"{n:,} 行/记录"
+        else:
+            dd = detail_by_file.get(Path(a["path"]).name) or {}
+            if dd.get("features"):
+                extra = f"{dd['features']:,} feature"
         lines.append(f"| `{Path(a['path']).name}` | {a['bytes']:,} B | {extra} |")
     lines += ["", "## 各源抓取结果（含分页模式 / 候选重试链）", "", "```json",
               json.dumps(m["sources"], ensure_ascii=False, indent=1)[:8000], "```", ""]
+
+    comp = m.get("completeness") or {}
+    if comp:
+        lines += ["## 可证明完整性（上游声明 vs 本地产出）", "",
+                  "| 源 | 上游声明 | 本地实得 | 对账 | 方法 |", "|---|---|---|---|---|",]
+        for name, key in (("NAD", "nad"), ("Overture", "overture"),
+                          ("OpenAddresses", "openaddresses"), ("Census TIGER", "census_tiger")):
+            c = comp.get(key) or {}
+            declared = c.get("upstream_declared_rows")
+            lines.append(f"| {name} | {declared if declared is not None else '—（上游未声明）'} "
+                         f"| {c.get('local_rows')} | {'✅' if c.get('evidence_1_full') else '⚠️ 仅存证'} "
+                         f"| {str(c.get('method'))[:60]} |")
+        lines += [""]
+
+    q = m.get("quality") or {}
+    dist = q.get("state_distribution")
+    if dist:
+        lines += ["## BBox 内 State 分布（只读统计，未裁剪）", "",
+                  f"共扫 `{q.get('nad_rows_scanned')}` 行：", ""]
+        for k, v in dist.items():
+            lines.append(f"- `{k or '(空)'}`：{v:,}")
+        lines += ["", f"本州（{sc['state']}）行数：{q.get('state_in_scope_rows')} "
+                       f"（{q.get('state_in_scope_pct')}%）—— 其余为 BBox 四角邻州门牌，入湖不裁剪。", ""]
     if fx.problems:
         lines += ["", "## ⚠️ 门禁问题（已阻断发布）", ""] + [f"- {p}" for p in fx.problems]
     p = fx.out / "RELEASE_NOTES.md"

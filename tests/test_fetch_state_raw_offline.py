@@ -14,6 +14,8 @@
   S6 ids 降级链           → 州级 returnIdsOnly 失败 → 自动降级到「县」块，仍能拿满并对账通过
   S7 ids 400k 静默截断    → 州级 ids 被服务端截到上限（count 更大）→ 四象限递归切分 →
                             叶子逐个对齐、汇总 == 州级 count、门禁放行（模拟真实 RI 事故）
+  S8 四源自证 + 元数据   → MANIFEST 的 completeness（四源对账）/ quality（State 分布）/
+                            row_counts / 全文 sha256 全部到位（P0+P2）
 """
 import io
 import json
@@ -86,6 +88,17 @@ def make_zip() -> bytes:
                     "number,street,unit,city,region,postcode,lon,lat\n"
                     + "".join(f"{i} Main St,,Dover,DE,19901,-75.5,39.1\n" for i in range(30)))
         zf.writestr("us/de/x.shp", b"\x00" * 3000)
+        # 真 .dbf/.shx 头：给 TIGER 双头对账（.dbf 记录数 == .shx 记录数）用
+        nrec, hlen = 30, 33 + 32
+        dbf = bytearray(32 + 32 + 1)
+        dbf[0] = 3
+        dbf[4:8] = nrec.to_bytes(4, "little")
+        dbf[8:10] = hlen.to_bytes(2, "little")
+        dbf[10:12] = (1 + 12).to_bytes(2, "little")
+        dbf[32:43] = b"TLID\x00\x00\x00\x00\x00\x00\x00"
+        dbf[64] = 0x0D
+        zf.writestr("us/de/x.dbf", bytes(dbf))
+        zf.writestr("us/de/x.shx", b"\x00" * (100 + nrec * 8))
     return buf.getvalue()
 
 
@@ -94,7 +107,7 @@ ZIP = make_zip()
 
 def nad_feats(oids):
     return [{"attributes": {"OBJECTID": o, "Add_Number": str(o), "StNam_Full": "MAIN ST",
-                            "Pad": "y" * 200},
+                            "State": "DE", "Pad": "y" * 200},
              "geometry": {"x": -75.5, "y": 39.1}} for o in oids]
 
 
@@ -343,8 +356,33 @@ def main():
           f"上限命中={nad7.get('ids_cap_hits')}｜ids_only 调用={kinds7.count('ids_only')}（期望5）")
     print("S7 判定：", "✅ 通过" if results["S7"] else "❌ 失败")
 
+    # ---------- S8 四源自证完整 + 元数据（P0/P2）----------
+    rc8, _ = scenario("S8 四源自证 + 元数据", base / "s8", mode="ids", official=4,
+                      main_pool=[], ids_target=range(1, 5))
+    man8 = json.loads((base / "s8" / "MANIFEST.json").read_text(encoding="utf-8"))
+    comp8 = man8.get("completeness") or {}
+    q8 = man8.get("quality") or {}
+    dist8 = q8.get("state_distribution") or {}
+    res = {
+        "退出0": rc8 == 0,
+        "四源齐": set(comp8) == {"note", "nad", "overture", "openaddresses", "census_tiger"},
+        "nad对账": comp8.get("nad", {}).get("evidence_1_full") is True,
+        "tiger双头对账": comp8.get("census_tiger", {}).get("evidence_1_full") is True,
+        "oa行数": comp8.get("openaddresses", {}).get("local_rows", 0) > 0,
+        "state分布": dist8.get("DE") == 4 and sum(dist8.values()) == 4,
+        "sha256全文64位": all(len(a.get("sha256", "")) == 64 for a in man8["assets"]),
+        "sha256_head16位": all(len(a.get("sha256_head", "")) == 16 for a in man8["assets"]),
+        "row_counts": bool(man8.get("row_counts")),
+    }
+    results["S8"] = all(res.values())
+    print(f"  completeness.nad={comp8.get('nad', {}).get('upstream_declared_rows')}→{comp8.get('nad', {}).get('local_rows')}｜"
+          f"state_distribution={dist8}｜资产摘要长度={len(man8['assets'][0].get('sha256', ''))}/"
+          f"{len(man8['assets'][0].get('sha256_head', ''))}｜row_counts键={len(man8.get('row_counts') or {})}")
+    bad8 = [k for k, v in res.items() if not v]
+    print("S8 判定：", "✅ 通过" if results["S8"] else f"❌ 失败 {bad8}")
+
     shutil.rmtree(base, ignore_errors=True)
-    print("\n总判定：", "✅ 七个场景全部符合预期" if all(results.values()) else f"❌ {results}")
+    print("\n总判定：", "✅ 八个场景全部符合预期" if all(results.values()) else f"❌ {results}")
     return 0 if all(results.values()) else 1
 
 

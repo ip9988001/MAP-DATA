@@ -163,6 +163,15 @@ def sha256_head(path: Path, limit: int = 1 << 20) -> str:
     return h.hexdigest()[:16]
 
 
+def sha256_full(path: Path, chunk: int = 8 << 20) -> str:
+    """整文件 sha256（分块读，内存恒定）。大文件也给全摘要，便于下游字节级校验。"""
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for blk in iter(lambda: fh.read(chunk), b""):
+            h.update(blk)
+    return h.hexdigest()
+
+
 def norm_zip(value) -> str:
     return re.sub(r"\D", "", str(value or ""))[:5]
 

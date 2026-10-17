@@ -56,6 +56,13 @@ ROSTER_PATH = ROOT / "rules" / "US" / "state_roster.yaml"
 MIN_ASSET_BYTES = 1024                      # 数据载荷（geojson/ndjson/zip）的空壳体量阈值
 PAYLOAD_SUFFIXES = (".geojson", ".ndjson", ".zip", ".csv", ".parquet")
 REQUIRED_SOURCES = ("nad", "overture", "openaddresses", "census_tiger")
+
+# Esri 服务端对 `returnIdsOnly` 的主键清单有**静默上限**：实测 RI 整州 BBox
+# returnCountOnly=569,222，returnIdsOnly 正好返回 400,000 条且**不报任何错**。
+# 也就是说“已取集合 == 主键集合”这种自洽对账会被这个上限骗过去（覆盖 70% 却全绿）。
+# 铁律：拿到的清单必须跟同一 BBox 的 returnCountOnly 对上，对不上就四象限递归切。
+NAD_IDS_LIST_CAP = 400_000
+NAD_IDS_MAX_DEPTH = 6
 STAMP = time.strftime("%Y%m%d-%H%M", time.gmtime())
 
 
@@ -353,6 +360,73 @@ def _nad_ids_only(fx: Fetcher, bbox_str: str, err_log: Path, label: str = "") ->
     return [i for i in ids if isinstance(i, int)]
 
 
+def _nad_count(fx: Fetcher, bbox_str: str, err_log: Path, label: str = ""):
+    """同一 BBox 的官方行数（POST，失败返回 None）。"""
+    payload = _esri_post_query(fx, {
+        "where": "1=1", "geometry": bbox_str, "geometryType": "esriGeometryEnvelope",
+        "inSR": "4326", "spatialRel": "esriSpatialRelIntersects",
+        "returnCountOnly": "true", "f": "json",
+    }, err_log, f"count{label}")
+    if payload.get("error"):
+        return None
+    cnt = payload.get("count")
+    return int(cnt) if isinstance(cnt, int) else None
+
+
+def _quad_split(bbox) -> list:
+    """四象限平分：四个子框无缝拼接 == 原框（无重叠、无缝隙）→ 并集恒等于父集。
+
+    ★ 这里**故意不用县级 BBox 起步**：5 个县框的并集面积小于整州 BBox（少了四角
+      邻州点），用县框合并出的 ID 数去跟州级 count 对账会永远差一截。四象限切分
+      是严格划分，汇总去重后必然等于州级 count。
+    """
+    w, s, e, n = (float(v) for v in bbox)
+    mx, my = (w + e) / 2.0, (s + n) / 2.0
+    return [(w, s, mx, my), (mx, s, e, my), (w, my, mx, n), (mx, my, e, n)]
+
+
+def _nad_collect_ids_capped(fx: Fetcher, bbox, err_log: Path, label: str = "",
+                            depth: int = 0, stats: dict | None = None):
+    """拿一整块 BBox 的主键清单；命中服务端 400,000 上限就四象限递归切分。
+
+    判据（任一成立即视为「清单被截断」，必须继续切）：
+      ① count 拿到了 → len(ids) < count（截断铁证）；
+      ② count 没拿到 → len(ids) >= NAD_IDS_LIST_CAP（顶到上限）。
+    叶子验收：len(leaf_ids) == leaf_count —— 逐叶对齐后再合并去重。
+    返回 (ids, stats)。
+    """
+    stats = stats if stats is not None else {"leaves": 0, "cap_hits": 0,
+                                              "requests": 0, "max_depth": 0,
+                                              "root_count": None}
+    bb_str = ",".join(str(v) for v in bbox)
+    ids = _nad_ids_only(fx, bb_str, err_log, label or "[state]")
+    stats["requests"] += 1
+    if not ids:
+        return [], stats
+    cnt = _nad_count(fx, bb_str, err_log, label or "[state]")
+    stats["requests"] += 1
+    if depth == 0:
+        stats["root_count"] = cnt
+    truncated = (len(ids) < cnt) if cnt is not None else (len(ids) >= NAD_IDS_LIST_CAP)
+    if not truncated:
+        stats["leaves"] += 1
+        stats["max_depth"] = max(stats["max_depth"], depth)
+        return ids, stats
+    stats["cap_hits"] += 1
+    if depth >= int(getattr(fx.args, "nad_ids_max_depth", NAD_IDS_MAX_DEPTH)):
+        log(f"⚠️ NAD{label} 切到第 {depth} 层仍被截断"
+            f"（{len(ids):,}/{cnt if cnt is not None else '?'}）→ 用已拿到的清单，由门禁拦")
+        return ids, stats
+    log(f"⚠️ NAD{label} 主键清单被截断：{len(ids):,} / 官方 count "
+        f"{cnt if cnt is not None else '未知'} → 四象限切分（第 {depth + 1} 层）")
+    out: list = []
+    for i, qb in enumerate(_quad_split(bbox)):
+        sub, _ = _nad_collect_ids_capped(fx, qb, err_log, f"{label}.q{i + 1}",
+                                        depth + 1, stats)
+        out.extend(sub)
+    return list(dict.fromkeys(out)), stats
+
+
 def _nad_one_batch(fx: Fetcher, chunk: list, fields: list[str], err_log: Path,
                    label: str) -> list | None:
     """按 objectIds 点名取一批属性（POST）。失败返回 None，由上层缩批重试。
@@ -641,7 +715,8 @@ def harvest_nad(fx: Fetcher) -> None:
     # ================= ids 模式（主路径：returnIdsOnly + objectIds 批取）=================
     log(f"NAD 模式=ids｜单批={fx.args.nad_ids_batch}｜降级阈值={fx.args.nad_split_threshold} 行")
 
-    target = _nad_ids_only(fx, fx.cfg["bbox_str"], err_log, label="[state]")
+    target, id_stats = _nad_collect_ids_capped(fx, fx.cfg["bbox"], err_log, label="[state]")
+    official_count = id_stats.get("root_count")
     fallback_used = None
     if not target:
         log("⚠️ 州级 returnIdsOnly 失败/为空 → 启用自适应降级链（县 → tract → 0.02°网格）")
@@ -651,8 +726,15 @@ def harvest_nad(fx: Fetcher) -> None:
             ids.extend(_collect_ids(fx, bb, err_log, label=s["key"]))
         target = list(dict.fromkeys(ids))
         fallback_used = f"adaptive:{fx.args.nad_shards}"
+        official_count = None      # 降级链不保证覆盖州框，不对账（由行数对账兜底）
     else:
-        log(f"NAD 官方主键清单：{len(target):,} 个")
+        log(f"NAD 官方主键清单：{len(target):,} 个（官方 count "
+            f"{official_count if official_count is not None else '未知'}｜"
+            f"叶子 {id_stats['leaves']}｜上限命中 {id_stats['cap_hits']}｜"
+            f"切分层深 {id_stats['max_depth']}）")
+        if official_count is not None and len(target) != official_count:
+            fx.problem(f"NAD 主键清单与官方 count 不一致：{len(target):,} != {official_count:,}"
+                       f"（覆盖率 {len(target) / official_count:.1%}）")
 
     if not target:
         fx.add(d / "nad_native_metadata.json")
@@ -691,6 +773,10 @@ def harvest_nad(fx: Fetcher) -> None:
             ids_batch=stats.get("batch_size"), batches=stats.get("batches"),
             shrinks=stats.get("shrinks"), failed_batches=stats.get("failed_batches"),
             fallback=fallback_used, retry_pass_rows=retried,
+            official_count=official_count, coverage_pct=(round(100.0 * got / official_count, 2)
+                                                        if official_count else None),
+            ids_leaves=id_stats["leaves"], ids_cap_hits=id_stats["cap_hits"],
+            ids_requests=id_stats["requests"], ids_max_depth=id_stats["max_depth"],
             official_ids=len(target), rows_fetched=got, missing_ids=len(missing),
             missing_sample=[str(i) for i in missing[:5]],
             truncated=truncated, streamed_to=rel(ndjson), fields_n=len(fields),
@@ -1076,6 +1162,11 @@ def gate(fx: Fetcher) -> None:
             errs.append(f"源 {src} 未执行（--only 漏了？）")
         elif st.get("status") not in ("ok", "warn-truncated"):
             errs.append(f"源 {src} 状态异常：{st.get('status')}")
+    # ★ 第二把锁：不管走哪条通道，已取行数必须与官方 count 相等（防“自洽但残缺”骗过门禁）
+    nad = fx.status.get("nad") or {}
+    oc, rf = nad.get("official_count"), nad.get("rows_fetched")
+    if isinstance(oc, int) and isinstance(rf, int) and rf != oc:
+        errs.append(f"NAD 覆盖不全：已取 {rf:,} ≠ 官方 {oc:,}（{rf / oc:.1%}）")
     for p in fx.files:
         bad = _asset_sanity(p)
         if bad:
@@ -1188,6 +1279,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="每批 objectIds 个数（500~800 安全，必须走 POST）")
     ap.add_argument("--nad-split-threshold", type=int, default=50000,
                     help="ids 模式下单块超这个行数就自动降级到 tract/网格")
+    ap.add_argument("--nad-ids-max-depth", type=int, default=NAD_IDS_MAX_DEPTH,
+                    help="主键清单被 400k 上限截断时四象限递归的最大层数（默认 6）")
     ap.add_argument("--nad-shards", choices=["county", "grid", "none"], default="county",
                     help="降级链一级切块：county=按县（默认）｜grid=州 bbox 网格｜none=整州")
     ap.add_argument("--nad-grid", type=int, default=2, help="--nad-shards grid 时的 N（N×N）")

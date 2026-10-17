@@ -12,6 +12,8 @@
   S5 ids 主路径           → returnIdsOnly + objectIds(POST) 批取；某批首次被拒 → 缩批后自恢复；
                             硬对账 official_ids == rows_fetched == 目标集合，全程不碰游标
   S6 ids 降级链           → 州级 returnIdsOnly 失败 → 自动降级到「县」块，仍能拿满并对账通过
+  S7 ids 400k 静默截断    → 州级 ids 被服务端截到上限（count 更大）→ 四象限递归切分 →
+                            叶子逐个对齐、汇总 == 州级 count、门禁放行（模拟真实 RI 事故）
 """
 import io
 import json
@@ -60,7 +62,21 @@ SHARD_POOLS = [((0.0, 0.0, 0.1, 0.1), [1, 2]),
 
 CALLS = {"cursor": [], "tiger": [], "post": []}
 FAKE = {"official": 5, "main_pool": [], "shard_pool": [], "county_ok": True,
-        "ids_target": [], "ids_fail_state": False, "fail_min_batch": 0}
+        "ids_target": [], "ids_by_bbox": {}, "ids_cap": 0,
+        "ids_fail_state": False, "fail_min_batch": 0}
+
+
+def kk(bb):
+    """BBox → 可哈希 key（6 位小数）。生产端用 str(float) 拼串，回读后取整一致。"""
+    return tuple(round(float(v), 6) for v in bb) if bb else None
+
+
+def _ids_for(bb):
+    """某 BBox 的**真实**主键全集（未截断）；未登记的 BBox 回退 ids_target。"""
+    if bb is None:
+        return []
+    hit = FAKE["ids_by_bbox"].get(kk(bb))
+    return list(hit) if hit is not None else list(FAKE["ids_target"])
 
 
 def make_zip() -> bytes:
@@ -139,13 +155,21 @@ def fake_http_json(url, params=None, **kw):
 # ---------------- ids 模式（POST / fs._post_json）----------------
 def fake_post(url, params, timeout=180):
     params = params or {}
+    if str(params.get("returnCountOnly", "")).lower() == "true":
+        bb = _bbox_of(params)
+        CALLS["post"].append({"kind": "count", "bbox": bb})
+        return {"count": len(_ids_for(bb))}
     if str(params.get("returnIdsOnly", "")).lower() == "true":
         bb = _bbox_of(params)
         is_state = bb is not None and all(abs(a - b) < 1e-9 for a, b in zip(bb, STATE_BBOX))
         CALLS["post"].append({"kind": "ids_only", "bbox": bb, "state": is_state})
         if is_state and FAKE["ids_fail_state"]:
             return {"error": "HTTP 400 fake Cannot perform query"}
-        return {"objectIds": list(FAKE["ids_target"])}
+        pool = _ids_for(bb)
+        # 模拟 Esri 服务端静默上限：不报错，只少给
+        if FAKE["ids_cap"] and len(pool) > FAKE["ids_cap"]:
+            pool = pool[:FAKE["ids_cap"]]
+        return {"objectIds": list(pool)}
     if "objectIds" in params:
         ids = [int(x) for x in str(params["objectIds"]).split(",") if str(x).strip()]
         CALLS["post"].append({"kind": "batch", "n": len(ids)})
@@ -166,11 +190,14 @@ def fake_http_get(url, **kw):
 
 
 def setup(official=5, main_pool=None, shard_pool=None, county_ok=True,
-          ids_target=None, ids_fail_state=False, fail_min_batch=0):
+          ids_target=None, ids_fail_state=False, fail_min_batch=0,
+          ids_by_bbox=None, ids_cap=0):
     FAKE.update({"official": official, "county_ok": county_ok,
                  "main_pool": list(main_pool if main_pool is not None else range(1, official + 1)),
                  "shard_pool": list(shard_pool or []),
                  "ids_target": list(ids_target or []),
+                 "ids_by_bbox": dict(ids_by_bbox or {}),
+                 "ids_cap": ids_cap,
                  "ids_fail_state": ids_fail_state,
                  "fail_min_batch": fail_min_batch})
     for k in CALLS:
@@ -287,8 +314,37 @@ def main():
           f"ids_only 调用={kinds.count('ids_only')}（州级失败后逐县重试）")
     print("S6 判定：", "✅ 通过" if results["S6"] else "❌ 失败")
 
+    # ---------- S7 ids 400k 静默截断 → 四象限递归切分 ----------
+    # 真事故复刻：RI 整州 count=569,222 但 returnIdsOnly 只给 400,000（不报错）。
+    # 这里用更小的数：整州 12 条、上限 6 条 → 4 个象限各 3 条（低于上限）。
+    w, s0, e, n = STATE_BBOX
+    mx, my = (w + e) / 2.0, (s0 + n) / 2.0
+    quads = [(w, s0, mx, my), (mx, s0, e, my), (w, my, mx, n), (mx, my, e, n)]
+    ids_map = {kk(STATE_BBOX): list(range(1, 13))}
+    for i, q in enumerate(quads):
+        ids_map[kk(q)] = [i * 3 + 1, i * 3 + 2, i * 3 + 3]
+    rc7, _ = scenario("S7 ids 上限截断→四象限递归", base / "s7", mode="ids",
+                      official=12, main_pool=[], ids_target=range(1, 13),
+                      ids_by_bbox=ids_map, ids_cap=6, extra=["--nad-ids-batch", "10"])
+    nd7 = base / "s7" / "nad" / "nad_us_de_full.ndjson"
+    n7 = len(nd7.read_text().splitlines()) if nd7.exists() else 0
+    nad7 = nad_of(base / "s7")
+    kinds7 = [c["kind"] for c in CALLS["post"]]
+    results["S7"] = (rc7 == 0 and n7 == 12
+                     and nad7.get("rows_fetched") == 12
+                     and nad7.get("official_count") == 12
+                     and nad7.get("coverage_pct") == 100.0
+                     and nad7.get("missing_ids") == 0
+                     and nad7.get("ids_cap_hits", 0) >= 1
+                     and nad7.get("ids_leaves") == 4
+                     and kinds7.count("ids_only") == 5)   # 1 州级 + 4 象限
+    print(f"NAD 行数={n7}（期望12）｜official_count={nad7.get('official_count')}｜"
+          f"覆盖率={nad7.get('coverage_pct')}%｜叶子={nad7.get('ids_leaves')}（期望4）｜"
+          f"上限命中={nad7.get('ids_cap_hits')}｜ids_only 调用={kinds7.count('ids_only')}（期望5）")
+    print("S7 判定：", "✅ 通过" if results["S7"] else "❌ 失败")
+
     shutil.rmtree(base, ignore_errors=True)
-    print("\n总判定：", "✅ 六个场景全部符合预期" if all(results.values()) else f"❌ {results}")
+    print("\n总判定：", "✅ 七个场景全部符合预期" if all(results.values()) else f"❌ {results}")
     return 0 if all(results.values()) else 1
 
 

@@ -468,6 +468,8 @@ def main():
         "双摘要齐全": all(len(s.get("sha256_gz", "")) == 64 and len(s.get("sha256_raw", "")) == 64
                           for s in sh10),
         "三数咬合": nad10.get("coverage_pct") == 100.0 and nad10.get("official_count") == 7,
+        "places命名": "TIGER-US-DE-places.zip" in [p.name for p in (base / "s10").rglob("*")],
+        "分片方法文案": "县多边形并集" in (man10["completeness"]["nad"].get("method") or ""),
         "命名统一": all(p.name.startswith(("NAD-US-DE-", "TIGER-US-DE-", "OA-US-DE-",
                                           "OVERTURE-US-DE"))
                         or p.name in ("MANIFEST.json", "RELEASE_NOTES.md")

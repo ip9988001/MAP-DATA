@@ -911,11 +911,14 @@ def harvest_overture(fx: Fetcher) -> None:
         cli_version = ""
     release = ""
 
-    # 优先 parquet（流式、不做 json.loads 全量进内存），失败自动回落 geojson
-    prefs = ["parquet", "geojson"] if fx.args.overture_format == "parquet" else ["geojson"]
+    # ★ CLI 的 -f 只接受 geojson / geojsonseq / geoparquet（写 parquet 会 rc=2）
+    #   → 参数层仍叫 parquet（对外语义），内部映射成 geoparquet（CLI 真值），落盘后缀 .parquet
+    CLI_FMT = {"parquet": "geoparquet", "geojson": "geojson"}
+    EXT = {"geoparquet": "parquet", "geojson": "geojson"}
+    prefs = ["geoparquet", "geojson"] if fx.args.overture_format == "parquet" else ["geojson"]
     target, used, tail, tries = None, None, "", []
     for fmt in prefs:
-        cand = d / f"overture_us_{state_lc}_addresses.{fmt}"
+        cand = d / f"overture_us_{state_lc}_addresses.{EXT[fmt]}"
         cmd = [cli, "download", f"--bbox={bbox}", "-f", fmt, "--type=address", "-o", str(cand)]
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=fx.args.overture_timeout)
         tail = ((proc.stdout or "")[-300:] + (proc.stderr or "")[-400:]).strip()
@@ -944,6 +947,7 @@ def harvest_overture(fx: Fetcher) -> None:
     fx.add(target)
     fx.note("overture", "ok", bbox=bbox, format=used, features=feats,
             cli_version=cli_version, overture_release=release, feature_file=rel(target),
+            format_cli=CLI_FMT.get(used, used),
             bytes=target.stat().st_size, tries=tries, elapsed=round(time.time() - t0, 1))
     if feats == 0:
         fx.problem("Overture 产物 features=0")
@@ -1503,6 +1507,8 @@ def _apply_naming(fx: Fetcher) -> None:
             new = _asset_name("TIGER", st, mid, "addrfeat", ext=".zip")
         elif n.startswith("tl_2024_"):
             rest = n[len("tl_2024_"):-len(".zip")].split("_", 1)[-1]
+            if rest == "place":                 # 州级 places 边界包 → places
+                rest = "places"
             new = _asset_name("TIGER", st, rest, ext=".zip")
         elif n.startswith("openaddresses_us_"):
             src = n[len(f"openaddresses_us_{st_lc}_"):-len(".zip")]
@@ -1653,8 +1659,11 @@ def build_completeness(fx: Fetcher) -> dict:
             "local_rows": nad_rows,
             "local_unique_ids": nad.get("official_ids"),
             "coverage_pct": nad.get("coverage_pct"),
-            "method": ("returnCountOnly(同一 BBox) == returnIdsOnly 全集 == 落盘行数"
-                       if nad.get("mode") == "ids" else "returnCountOnly == 去重后行数"),
+            "method": ("县多边形并集主键 + 溢出主键 == 州 returnCountOnly；"
+                       "且 Σ分片行 − 县界重复 == 主键覆盖"
+                       if str(nad.get("mode") or "").endswith("county_shards")
+                       else ("returnCountOnly(同一 BBox) == returnIdsOnly 全集 == 落盘行数"
+                             if nad.get("mode") == "ids" else "returnCountOnly == 去重后行数")),
             "evidence_1_full": bool(nad_claim) and nad_rows == nad_claim,
         },
         "overture": {

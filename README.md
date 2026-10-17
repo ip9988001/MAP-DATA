@@ -46,3 +46,16 @@ Actions → `dover-fetch` → Run workflow（可改 `state/city/zip/bbox`，默�
 pip install -r requirements.txt
 python bots/dover_fetch.py
 ```
+
+---
+
+## 参考字典：全球行政编码注册表
+
+`rules/geo/global_admin_registry.json`（约 1.4 MB，**随代码走，不发 Release**）
+
+- ISO 3166-1 国家 **249** 条（含 alpha-2 / alpha-3 / 数字码 + 电话区号、邮编正则、大陆码）
+- ISO 3166-2 一级行政区 **5,046** 条（覆盖 200 国），另有 277 条 GeoNames 兜底（明确标记非 ISO）
+- 生成器：`bots/build_admin_registry.py`（可重跑、幂等）；来源与口径：`rules/geo/SOURCES.md`
+- 自检：`python3 tests/test_admin_registry_offline.py`
+- 用途：脚本里查国家/州码（如 `US` / `US-RI`），并给 `state_roster.yaml` 加了一道拼写锁——
+  州码查不到注册表时发布门禁直接阻断。

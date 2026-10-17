@@ -54,6 +54,7 @@ if str(ROOT / "bots") not in sys.path:
 import dover_fetch as df  # noqa: E402
 
 ROSTER_PATH = ROOT / "rules" / "US" / "state_roster.yaml"
+ADMIN_REGISTRY = ROOT / "rules" / "geo" / "global_admin_registry.json"
 MIN_ASSET_BYTES = 1024                      # 数据载荷（geojson/ndjson/zip）的空壳体量阈值
 PAYLOAD_SUFFIXES = (".geojson", ".ndjson", ".zip", ".csv", ".parquet")
 REQUIRED_SOURCES = ("nad", "overture", "openaddresses", "census_tiger")
@@ -1221,12 +1222,34 @@ def gate(fx: Fetcher) -> None:
         if isinstance(d, dict) and d.get("records_match") is False:
             errs.append(f"TIGER 半载包：{d.get('file')} dbf={d.get('dbf_records')} "
                         f"≠ shx={d.get('shx_records')}")
+    # ★ 第四把锁：州码必须是真 ISO 3166-2（查全局注册表，防 roster 拼错）
+    iso = _iso_codes(fx.cfg["state"])
+    if iso["iso_3166_2_verified"] is False:
+        errs.append(f"州码 {iso['iso_3166_2']} 不在 ISO 3166-2 注册表"
+                    f"（rules/geo/global_admin_registry.json）")
     for p in fx.files:
         bad = _asset_sanity(p)
         if bad:
             errs.append(f"{bad}：{rel(p)}")
     if errs:
         raise RuntimeError("发布门禁未通过，共 %d 项：\n  - %s" % (len(errs), "\n  - ".join(errs)))
+
+
+def _iso_codes(state_code: str) -> dict:
+    """本厂产物的 ISO 归属：国家固定 US；州码在**全局注册表**里核对（查不到就如实标 False）。
+
+    注册表是 `rules/geo/global_admin_registry.json`（随代码走，不发 Release）。
+    注册表不存在时返回 None（不阻断），存在但对不上才视为真问题。
+    """
+    iso2 = f"US-{state_code}"
+    rec = {"iso_3166_1": "US", "iso_3166_2": iso2, "iso_3166_2_verified": None}
+    try:
+        data = json.loads(ADMIN_REGISTRY.read_text(encoding="utf-8"))
+        rec["iso_3166_2_verified"] = any(d.get("iso_3166_2") == iso2
+                                         for d in (data.get("admin_divisions") or []))
+    except Exception:  # noqa: BLE001
+        pass
+    return rec
 
 
 def build_completeness(fx: Fetcher) -> dict:
@@ -1328,12 +1351,15 @@ def build_manifest(fx: Fetcher) -> Path:
 
     cfg = fx.cfg
     nad_st = fx.status.get("nad") or {}
+    iso = _iso_codes(cfg["state"])
     m = {
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "runner": os.environ.get("GITHUB_RUN_ID", "local"),
         "generator": "bots/fetch_state_raw.py",
         "roster": str(ROSTER_PATH.relative_to(ROOT)),
         "scope": {"country": "US", "state": cfg["state"], "state_name": cfg.get("name"),
+                  "iso_3166_1": iso["iso_3166_1"], "iso_3166_2": iso["iso_3166_2"],
+                  "iso_3166_2_verified": iso["iso_3166_2_verified"],
                   "state_fips": cfg["state_fips"], "bbox": cfg["bbox"],
                   "counties": [{"key": c["key"], "fips": c["fips"], "name": c["name"]} for c in cfg["counties"]],
                   "note": "四源全量【原始】数据 —— 未做任何清洗 / 去重 / 过滤 / 裁剪"},

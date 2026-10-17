@@ -30,6 +30,8 @@
 from __future__ import annotations
 
 import argparse
+import gzip
+import hashlib
 import io
 import json
 import os
@@ -731,6 +733,11 @@ def harvest_nad(fx: Fetcher) -> None:
     ndjson = d / f"nad_us_{fx.cfg['state'].lower()}_full.ndjson"
     seen: set = set()
 
+    # ================= v1 主路径：按县切片 + gzip（--pack-mode county_shards）=================
+    if getattr(fx.args, "pack_mode", "single") == "county_shards" and fx.args.nad_mode == "ids":
+        _nad_harvest_county_shards(fx, d, fields, oid, err_log)
+        return
+
     # ================= cursor 模式（备选路径）=================
     if fx.args.nad_mode == "cursor":
         shards = _nad_shards(fx)
@@ -1256,6 +1263,285 @@ def harvest_tiger(fx: Fetcher) -> None:
                    f"{json.dumps(m.get('tried') or m.get('error') or m.get('reason'), ensure_ascii=False)[:200]}")
 
 
+
+# --------------------------------------------------------------------------- v1: 按县切片 + gzip
+def _asset_name(source: str, state: str, *parts, ext: str = "") -> str:
+    """统一命名：`{源}-US-{州}-{段...}`，例 `NAD-US-RI-44007-providence.ndjson.gz`。
+
+    ★ 县一律用 5 位 FIPS：美国县缩写没有标准，`LA` 既是洛杉矶县又是路易斯安那州码，
+      而 FIPS 跟 TIGER / OA / ZCTA 全都能对上。短名放后面给人看。
+    """
+    seg = "-".join([source.upper(), "US", state.upper()] + [str(p) for p in parts if p])
+    return seg + ext
+
+
+class _HashSink:
+    """包在 TextIOWrapper 外面：边写边算「解压后」sha256、行数、State 分布。
+
+    这样 gzip 落盘后能同时给出两个摘要（压缩后 / 解压后），完整性不打折。
+    """
+    _PAT = re.compile(r'"State"\s*:\s*"([^"]*)"')
+
+    def __init__(self, txt):
+        self.txt = txt
+        self.h = hashlib.sha256()
+        self.rows = 0
+        self.bytes = 0
+        self.states: Counter = Counter()
+
+    def write(self, s: str) -> int:
+        self.txt.write(s)
+        b = s.encode("utf-8")
+        self.h.update(b)
+        self.bytes += len(b)
+        self.rows += s.count("\n")
+        m = self._PAT.search(s)
+        if m:
+            self.states[m.group(1)] += 1
+        return len(s)
+
+    def flush(self) -> None:
+        self.txt.flush()
+
+
+def _gz_open(path: Path):
+    """流式 gzip 写；返回 (sink, close())。close() 返回解压后统计。"""
+    raw = gzip.open(path, "wb", compresslevel=6)
+    txt = io.TextIOWrapper(raw, encoding="utf-8", newline="\n")
+    sink = _HashSink(txt)
+
+    def close() -> dict:
+        try:
+            txt.flush()
+        finally:
+            txt.close()
+        return {"rows": sink.rows, "uncompressed_bytes": sink.bytes,
+                "sha256_raw": sink.h.hexdigest(),
+                "state_distribution": dict(sink.states.most_common())}
+
+    return sink, close
+
+
+def _county_polygon_base(rings: list) -> dict:
+    return {"geometry": json.dumps({"rings": rings, "spatialReference": {"wkid": 4326}}),
+            "geometryType": "esriGeometryPolygon", "inSR": "4326",
+            "spatialRel": "esriSpatialRelIntersects"}
+
+
+def _county_rings(fx: Fetcher, county: dict) -> list | None:
+    """取县的真实边界 rings（Esri 格式），复用 TIGER 县界缓存（NAD/TIGER 共用一次查询）。"""
+    got = _county_boundaries(fx)
+    rec = got.get(f"county_{county['key']}")
+    if not rec:
+        return None
+    feats = (rec.get("payload") or {}).get("features") or []
+    if not feats:
+        return None
+    return ((feats[0].get("geometry") or {}).get("rings")) or None
+
+
+def _nad_harvest_county_shards(fx: Fetcher, d: Path, fields: list, oid: str,
+                               err_log: Path) -> None:
+    """v1 主路径：按县真实边界切片 → 每县一个 gzip 分片 + 一个溢出包。
+
+    三数咬合（必须分毫不差，否则门禁阻断）：
+        州 bbox 主键总数 == 落在各县多边形内的主键并集 + 溢出主键数
+    溢出 = 州 bbox 主键清单 − 各县主键并集（纯集合差，不重新拉一遍数据）。
+    """
+    t0 = time.time()
+    st = fx.cfg["state"]
+    (d / "nad_full_columns.json").write_text(
+        json.dumps({"fields": fields, "fields_n": len(fields), "object_id_field": oid},
+                   ensure_ascii=False, indent=1), encoding="utf-8")
+    fx.add(d / "nad_native_metadata.json", d / "nad_full_columns.json")
+    base = {"geometry": fx.cfg["bbox_str"], "geometryType": "esriGeometryEnvelope",
+            "inSR": "4326", "spatialRel": "esriSpatialRelIntersects"}
+    log("NAD 模式=ids+county_shards｜先取州 bbox 全集（OID 区间二分）")
+    root_ids, ost = _nad_ids_by_oid_ranges(fx, base, err_log, "[state]")
+    official = ost.get("count")
+    if not root_ids:
+        fx.note("nad", "error", channel="A-official-rest", mode="ids+county_shards",
+                error="州 bbox 主键清单为空", elapsed=round(time.time() - t0, 1))
+        fx.problem("NAD 州 bbox 一个主键都没拿到（见 nad_http_errors.log）")
+        return
+    log(f"州 bbox 主键 {len(root_ids):,}｜官方 count {official}｜"
+        f"OID 查询 {ost['queries']} 次｜切分 {ost['splits']} 次")
+
+    shards: list = []
+    union: set = set()
+    dup_rows = 0
+    state_dist: Counter = Counter()
+
+    for c in fx.cfg["counties"]:
+        rings = _county_rings(fx, c)
+        if not rings:
+            fx.problem(f"NAD 按县切片缺县界多边形：{c['name']}（{c['fips']}）")
+            continue
+        ids, cst = _nad_ids_by_oid_ranges(fx, _county_polygon_base(rings),
+                                         err_log, f"[{c['key']}]")
+        ccnt = cst.get("count")
+        if not ids:
+            fx.problem(f"NAD 县片为空：{c['name']}（{c['fips']}）官方 count={ccnt}")
+            continue
+        path = d / _asset_name("NAD", st, c["fips"], c["key"], ext=".ndjson.gz")
+        sink, close = _gz_open(path)
+        seen_l: set = set()
+        _nad_fetch_by_ids(fx, ids, fields, oid, sink, seen_l, err_log)
+        missing = [i for i in ids if i not in seen_l]
+        if missing:
+            old = fx.args.nad_ids_batch
+            fx.args.nad_ids_batch = min(100, max(25, old // 5))
+            _nad_fetch_by_ids(fx, missing, fields, oid, sink, seen_l, err_log)
+            fx.args.nad_ids_batch = old
+            missing = [i for i in ids if i not in seen_l]
+        meta = close()
+        fx.add(path)
+        dup_rows += max(0, meta["rows"] - len(seen_l))
+        union |= set(ids)
+        state_dist.update(meta["state_distribution"])
+        ok = (ccnt is None or meta["rows"] == ccnt) and not missing
+        if not ok:
+            fx.problem(f"NAD 县片对账失败 {c['name']}（{c['fips']}）："
+                       f"取 {meta['rows']:,} / 官方 {ccnt} / 缺 {len(missing):,} 主键")
+        shards.append({"kind": "county", "county_fips": c["fips"], "county_key": c["key"],
+                       "county_name": c["name"], "file": rel(path),
+                       "rows": meta["rows"], "expected_rows": ccnt,
+                       "uncompressed_bytes": meta["uncompressed_bytes"],
+                       "gz_bytes": path.stat().st_size,
+                       "sha256_gz": df.sha256_full(path),
+                       "sha256_raw": meta["sha256_raw"],
+                       "state_distribution": meta["state_distribution"],
+                       "missing_ids": len(missing)})
+        log(f"  县片 {c['fips']} {c['key']:<14} 行 {meta['rows']:>8,} / 官方 {ccnt:>8,}"
+            f"｜gz {path.stat().st_size / 1e6:>6.2f} MB")
+
+    # 溢出：州 bbox 全集 − 各县并集（纯集合差，绝不重复拉数据）
+    over_ids = [i for i in root_ids if i not in union]
+    over_meta = {"rows": 0, "uncompressed_bytes": 0, "sha256_raw": None,
+                 "state_distribution": {}}
+    if over_ids:
+        path = d / _asset_name("NAD", st, "OUTOFSTATE", ext=".ndjson.gz")
+        sink, close = _gz_open(path)
+        seen_o: set = set()
+        _nad_fetch_by_ids(fx, over_ids, fields, oid, sink, seen_o, err_log)
+        missing_o = [i for i in over_ids if i not in seen_o]
+        if missing_o:
+            old = fx.args.nad_ids_batch
+            fx.args.nad_ids_batch = min(100, max(25, old // 5))
+            _nad_fetch_by_ids(fx, missing_o, fields, oid, sink, seen_o, err_log)
+            fx.args.nad_ids_batch = old
+            missing_o = [i for i in over_ids if i not in seen_o]
+        over_meta = close()
+        fx.add(path)
+        state_dist.update(over_meta["state_distribution"])
+        if missing_o:
+            fx.problem(f"NAD 溢出包对账失败：缺 {len(missing_o):,} 主键")
+        shards.append({"kind": "overflow", "county_fips": None, "county_key": "OUTOFSTATE",
+                       "county_name": "不在本州界内的 BBox 溢出点（邻州门牌，供核验用）",
+                       "file": rel(path), "rows": over_meta["rows"],
+                       "expected_rows": len(over_ids),
+                       "uncompressed_bytes": over_meta["uncompressed_bytes"],
+                       "gz_bytes": path.stat().st_size,
+                       "sha256_gz": df.sha256_full(path),
+                       "sha256_raw": over_meta["sha256_raw"],
+                       "state_distribution": over_meta["state_distribution"],
+                       "missing_ids": len(missing_o)})
+        log(f"  溢出包 OUTOFSTATE 行 {over_meta['rows']:>8,} / 应得 {len(over_ids):>8,}"
+            f"｜gz {path.stat().st_size / 1e6:>6.2f} MB")
+
+    # ---- 三数咬合 ----
+    covered = len(union) + len(over_ids)
+    total_rows = sum(s["rows"] for s in shards)
+    if official is not None and covered != official:
+        fx.problem(f"NAD 三数不咬合：县并集 {len(union):,} + 溢出 {len(over_ids):,}"
+                   f" = {covered:,} ≠ 州官方 {official:,}")
+    if total_rows - dup_rows != covered:
+        fx.problem(f"NAD 分片行数不咬合：Σ行 {total_rows:,} − 县界重复 {dup_rows:,}"
+                   f" = {total_rows - dup_rows:,} ≠ 主键覆盖 {covered:,}")
+
+    fx.cache["nad_shards"] = shards
+    fx.note("nad", "ok" if not fx.problems else "warn-truncated",
+            channel="A-official-rest", mode="ids+county_shards",
+            fetch_strategy="OID 区间二分取主键 → 县多边形切片 → objectIds 批取 → gzip 落盘",
+            official_count=official, official_ids=len(root_ids),
+            shard_count=len([s for s in shards if s["kind"] == "county"]),
+            overflow_rows=over_meta["rows"], overflow_ids=len(over_ids),
+            boundary_duplicate_rows=dup_rows, total_rows=total_rows,
+            coverage_pct=(round(100.0 * covered / official, 2) if official else None),
+            ids_queries=ost["queries"], ids_splits=ost["splits"],
+            state_distribution=dict(state_dist.items()),
+            state_in_scope_rows=state_dist.get(st),
+            state_in_scope_pct=(round(100.0 * state_dist.get(st, 0) / total_rows, 2)
+                                if total_rows else None),
+            rows_fetched=covered, truncated=False,
+            bytes=sum(s["gz_bytes"] for s in shards),
+            elapsed=round(time.time() - t0, 1))
+
+
+def _apply_naming(fx: Fetcher) -> None:
+    """v1 命名统一：把所有资产改名为 `{源}-US-{州}-...`（含 ledger 里的引用）。"""
+    st = fx.cfg["state"]
+    st_lc = st.lower()
+    fips2key = {c["fips"]: c["key"] for c in fx.cfg["counties"]}
+    mapping: dict[str, str] = {}
+    for p in list(fx.files):
+        n = p.name
+        new = n
+        if n.startswith("tiger_state.geojson"):
+            new = _asset_name("TIGER", st, "state", ext=".geojson")
+        elif n.startswith("tiger_zcta.geojson"):
+            new = _asset_name("TIGER", st, "zcta", ext=".geojson")
+        elif n.startswith("tiger_county_"):
+            key = n[len("tiger_county_"):-len(".geojson")]
+            fips = next((f for f, k in fips2key.items() if k == key), key)
+            new = _asset_name("TIGER", st, f"county-{fips}", ext=".geojson")
+        elif n.startswith("tiger_place_"):
+            place = n[len("tiger_place_"):-len(".geojson")]
+            new = _asset_name("TIGER", st, f"place-{place}", ext=".geojson")
+        elif n.startswith(f"tl_2024_{fx.cfg['state_fips']}") and n.endswith("_addrfeat.zip"):
+            mid = n[len(f"tl_2024_"):-len("_addrfeat.zip")]
+            new = _asset_name("TIGER", st, mid, "addrfeat", ext=".zip")
+        elif n.startswith("tl_2024_"):
+            rest = n[len("tl_2024_"):-len(".zip")].split("_", 1)[-1]
+            new = _asset_name("TIGER", st, rest, ext=".zip")
+        elif n.startswith("openaddresses_us_"):
+            src = n[len(f"openaddresses_us_{st_lc}_"):-len(".zip")]
+            new = _asset_name("OA", st, src, ext=".zip")
+        elif n.startswith("overture_us_"):
+            ext = ".geojson" if n.endswith(".geojson") else "." + n.rsplit(".", 1)[-1]
+            new = _asset_name("OVERTURE", st, ext=ext)
+        elif n == f"nad_us_{st_lc}_full.ndjson":
+            new = _asset_name("NAD", st, "ALL", ext=".ndjson")
+        elif n == "nad_full_columns.json":
+            new = _asset_name("NAD", st, "columns", ext=".json")
+        elif n == "nad_native_metadata.json":
+            new = _asset_name("NAD", st, "layer-metadata", ext=".json")
+        elif n == "nad_http_errors.log":
+            new = _asset_name("NAD", st, "http-errors", ext=".log")
+        if new != n:
+            mapping[n] = new
+    if not mapping:
+        return
+    for p in list(fx.files):
+        if p.name in mapping:
+            dst = p.with_name(mapping[p.name])
+            if dst != p:
+                os.replace(p, dst)
+    fx.files = [p.with_name(mapping.get(p.name, p.name)) for p in fx.files]
+
+    def rewrite(obj):
+        if isinstance(obj, dict):
+            return {k: (rewrite(v)) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [rewrite(v) for v in obj]
+        if isinstance(obj, str) and obj in mapping:
+            return mapping[obj]
+        return obj
+
+    fx.status = rewrite(fx.status)
+    fx.ledger = rewrite(fx.ledger)
+    log(f"命名统一完成：{len(mapping)} 个资产改为 {{源}}-US-{st}-... 口径")
+
 # --------------------------------------------------------------------------- 门禁 / 打包
 def _asset_sanity(p: Path) -> str | None:
     """产物空壳检测：**走结构，不靠体积**。返回问题描述，None = 正常。
@@ -1428,8 +1714,12 @@ def build_manifest(fx: Fetcher) -> Path:
                     byname[n] = d["native_rows"]
                 elif d.get("dbf_records") is not None:
                     byname[n] = d["dbf_records"]
-        return {rel(p): byname[os.path.basename(p)] for p in fx.files
-                if os.path.basename(p) in byname}
+        out = {rel(p): byname[os.path.basename(p)] for p in fx.files
+               if os.path.basename(p) in byname}
+        for s in (fx.cache.get("nad_shards") or []):
+            if s.get("file"):
+                out[s["file"]] = s["rows"]
+        return out
 
     cfg = fx.cfg
     nad_st = fx.status.get("nad") or {}
@@ -1449,6 +1739,7 @@ def build_manifest(fx: Fetcher) -> Path:
                       "sha256_head": "前 1MB 的 sha256 前 16 位（快检用）"},
         "assets": [asset(p) for p in sorted(fx.files)],
         "row_counts": row_counts(),
+        "shards": fx.cache.get("nad_shards") or [],
         "completeness": build_completeness(fx),
         "quality": {"note": "只读统计，不做裁剪：BBox 是矩形，必然包含邻州边角门牌",
                     "state_distribution": nad_st.get("state_distribution"),
@@ -1502,6 +1793,20 @@ def release_notes(manifest_path: Path, fx: Fetcher, tag: str) -> Path:
         lines.append(f"| `{Path(a['path']).name}` | {a['bytes']:,} B | {extra} |")
     lines += ["", "## 各源抓取结果（含分页模式 / 候选重试链）", "", "```json",
               json.dumps(m["sources"], ensure_ascii=False, indent=1)[:8000], "```", ""]
+
+    shards = m.get("shards") or []
+    if shards:
+        lines += ["## 按县分片（每片 gzip，双摘要可校验）", "",
+                  "| 分片 | 行数 | gzip | 解压后 sha256 |", "|---|---|---|---|"]
+        for sh in shards:
+            lines.append(f"| `{Path(sh['file']).name}` | {sh.get('rows', 0):,} "
+                         f"| {sh.get('gz_bytes', 0) / 1e6:.2f} MB "
+                         f"| `{str(sh.get('sha256_raw'))[:16]}` |")
+        county_rows = sum(s['rows'] for s in shards if s.get('kind') == 'county')
+        over_rows = sum(s['rows'] for s in shards if s.get('kind') == 'overflow')
+        lines += ["", f"县片合计 **{county_rows:,}** 行 + 溢出包 **{over_rows:,}** 行"
+                      f"（县界重复 {m['sources'][0].get('boundary_duplicate_rows', 0):,} 行，"
+                      f"去重后 == 州官方 count：{m['sources'][0].get('official_count')}）", ""]
 
     comp = m.get("completeness") or {}
     if comp:
@@ -1574,6 +1879,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--nad-ids-slicing", choices=["quadrant", "oid"], default="quadrant",
                     help="主键清单分段方式：quadrant=四象限递归（仅矩形，v0 默认）｜"
                          "oid=OBJECTID 区间二分（通用，多边形/大县也能用）")
+    ap.add_argument("--pack-mode", choices=["single", "county_shards"], default="single",
+                    help="打包方式：single=v0 单文件（默认）｜county_shards=按县切片+gzip+统一命名")
     ap.add_argument("--nad-shards", choices=["county", "grid", "none"], default="county",
                     help="降级链一级切块：county=按县（默认）｜grid=州 bbox 网格｜none=整州")
     ap.add_argument("--nad-grid", type=int, default=2, help="--nad-shards grid 时的 N（N×N）")
@@ -1610,6 +1917,9 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:  # noqa: BLE001 单源失败不拖垮整轮，但如实记账
             fx.note(name, "exception", error=f"{type(exc).__name__}: {str(exc)[:400]}")
             fx.problem(f"源 {name} 抛异常：{type(exc).__name__}: {str(exc)[:200]}")
+
+    if getattr(args, "pack_mode", "single") != "single":
+        _apply_naming(fx)
 
     manifest = build_manifest(fx)
     fx.files.append(manifest)

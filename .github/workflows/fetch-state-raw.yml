@@ -34,6 +34,16 @@ on:
       nad_workers:
         description: 分片并发数（建议 2，避免撞按 IP 限速）
         default: "2"
+      pack_mode:
+        description: 打包方式（single=v0 单文件；county_shards=按县切片+gzip+统一命名）
+        type: choice
+        options: [single, county_shards]
+        default: single
+      nad_ids_slicing:
+        description: 主键清单分段方式（quadrant=四象限仅矩形；oid=OBJECTID 区间二分，通用）
+        type: choice
+        options: [quadrant, oid]
+        default: quadrant
       overture_format:
         description: Overture 落地格式（parquet 优先，失败自动回落 geojson）
         type: choice
@@ -70,7 +80,7 @@ jobs:
 
       - name: 打印本次运行参数与州配置档
         run: |
-          echo "state=${{ inputs.state }} tag=${{ inputs.tag }} nad_mode=${{ inputs.nad_mode }} ids_batch=${{ inputs.nad_ids_batch }} shards=${{ inputs.nad_shards }} workers=${{ inputs.nad_workers }} fmt=${{ inputs.overture_format }}"
+          echo "state=${{ inputs.state }} tag=${{ inputs.tag }} pack=${{ inputs.pack_mode }} slicing=${{ inputs.nad_ids_slicing }} nad_mode=${{ inputs.nad_mode }} ids_batch=${{ inputs.nad_ids_batch }} shards=${{ inputs.nad_shards }} workers=${{ inputs.nad_workers }} fmt=${{ inputs.overture_format }}"
           sed -n '1,40p' rules/US/state_roster.yaml
 
       - name: 单州四源全量抓取（runner 侧下载，本机零下载）
@@ -79,7 +89,7 @@ jobs:
           RELEASE_TAG: ${{ inputs.tag }}
         run: |
           set -u
-          ARGS="--state ${{ inputs.state }} --nad-max ${{ inputs.nad_max }} --overture-format ${{ inputs.overture_format }} --nad-mode ${{ inputs.nad_mode }} --nad-ids-batch ${{ inputs.nad_ids_batch }} --nad-shards ${{ inputs.nad_shards }} --nad-workers ${{ inputs.nad_workers }}"
+          ARGS="--state ${{ inputs.state }} --nad-max ${{ inputs.nad_max }} --overture-format ${{ inputs.overture_format }} --nad-mode ${{ inputs.nad_mode }} --nad-ids-batch ${{ inputs.nad_ids_batch }} --nad-shards ${{ inputs.nad_shards }} --nad-workers ${{ inputs.nad_workers }} --pack-mode ${{ inputs.pack_mode }} --nad-ids-slicing ${{ inputs.nad_ids_slicing }}"
           if [ -n "$RELEASE_TAG" ]; then ARGS="$ARGS --tag $RELEASE_TAG"; fi
           if [ "${{ inputs.publish_release }}" = "true" ]; then ARGS="$ARGS --publish-release"; fi
           echo "python bots/fetch_state_raw.py $ARGS"

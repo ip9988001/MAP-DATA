@@ -17,6 +17,8 @@
   S8 四源自证 + 元数据   → MANIFEST 的 completeness（四源对账）/ quality（State 分布）/
                             row_counts / 全文 sha256 全部到位（P0+P2）
   S9 OID 区间二分        → 主键清单撞 400k 上限时按 OBJECTID 区间二分补齐（v1 通用切法）
+  S10 按县切片 + gzip    → 每个县一个 gz 分片 + 溢出包；州总量 == Σ县片 + 溢出（三数咬合）；
+                            命名统一为 NAD/TIGER/OA/OVERTURE-US-{州}-...
 """
 import io
 import json
@@ -66,13 +68,34 @@ SHARD_POOLS = [((0.0, 0.0, 0.1, 0.1), [1, 2]),
 
 CALLS = {"cursor": [], "tiger": [], "post": []}
 FAKE = {"official": 5, "main_pool": [], "shard_pool": [], "county_ok": True,
-        "ids_target": [], "ids_by_bbox": {}, "ids_cap": 0,
+        "ids_target": [], "ids_by_bbox": {}, "ids_cap": 0, "poly_pools": {},
         "ids_fail_state": False, "fail_min_batch": 0}
 
 
 def kk(bb):
     """BBox → 可哈希 key（6 位小数）。生产端用 str(float) 拼串，回读后取整一致。"""
     return tuple(round(float(v), 6) for v in bb) if bb else None
+
+
+def _poly_key(params):
+    try:
+        rings = (json.loads(params.get("geometry") or "{}") or {}).get("rings") or []
+    except Exception:
+        return None
+    if not rings or not rings[0]:
+        return None
+    pt = rings[0][0]
+    for k, rr in COUNTY_RINGS.items():
+        if abs(rr[0][0][0] - pt[0]) < 1e-9 and abs(rr[0][0][1] - pt[1]) < 1e-9:
+            return k
+    return None
+
+
+def _pool_of(params):
+    """多边形 → 按县池；矩形 → 按 bbox 池。"""
+    if str(params.get("geometryType")) == "esriGeometryPolygon":
+        return list(FAKE["poly_pools"].get(_poly_key(params)) or [])
+    return _ids_for(_bbox_of(params))
 
 
 def _ids_for(bb):
@@ -177,7 +200,7 @@ def fake_post(url, params, timeout=180):
     params = params or {}
     if params.get("outStatistics"):
         bb = _bbox_of(params)
-        pool = _ids_for(bb)
+        pool = _pool_of(params)
         rng = _oid_range(params.get("where"))
         if rng:
             pool = [o for o in pool if rng[0] <= o < rng[1]]
@@ -188,14 +211,14 @@ def fake_post(url, params, timeout=180):
     if str(params.get("returnCountOnly", "")).lower() == "true":
         bb = _bbox_of(params)
         CALLS["post"].append({"kind": "count", "bbox": bb})
-        return {"count": len(_ids_for(bb))}
+        return {"count": len(_pool_of(params))}
     if str(params.get("returnIdsOnly", "")).lower() == "true":
         bb = _bbox_of(params)
         is_state = bb is not None and all(abs(a - b) < 1e-9 for a, b in zip(bb, STATE_BBOX))
         CALLS["post"].append({"kind": "ids_only", "bbox": bb, "state": is_state})
         if is_state and FAKE["ids_fail_state"]:
             return {"error": "HTTP 400 fake Cannot perform query"}
-        pool = _ids_for(bb)
+        pool = _pool_of(params)
         rng = _oid_range(params.get("where"))
         if rng:
             pool = [o for o in pool if rng[0] <= o < rng[1]]
@@ -224,13 +247,14 @@ def fake_http_get(url, **kw):
 
 def setup(official=5, main_pool=None, shard_pool=None, county_ok=True,
           ids_target=None, ids_fail_state=False, fail_min_batch=0,
-          ids_by_bbox=None, ids_cap=0):
+          ids_by_bbox=None, ids_cap=0, poly_pools=None):
     FAKE.update({"official": official, "county_ok": county_ok,
                  "main_pool": list(main_pool if main_pool is not None else range(1, official + 1)),
                  "shard_pool": list(shard_pool or []),
                  "ids_target": list(ids_target or []),
                  "ids_by_bbox": dict(ids_by_bbox or {}),
                  "ids_cap": ids_cap,
+                 "poly_pools": dict(poly_pools or {}),
                  "ids_fail_state": ids_fail_state,
                  "fail_min_batch": fail_min_batch})
     for k in CALLS:
@@ -420,8 +444,44 @@ def main():
           f"上限命中={nad9.get('ids_cap_hits')}")
     print("S9 判定：", "✅ 通过" if results["S9"] else "❌ 失败")
 
+    # ---------- S10 按县切片 + gzip（v1 主路径）----------
+    # 5 个点落在 3 个县多边形内（2/2/1），另 2 个在州 bbox 内但不属任何县 → 溢出包
+    rc10, _ = scenario("S10 county_shards 切片+gzip", base / "s10", mode="ids",
+                       official=7, main_pool=[], ids_target=range(1, 8),
+                       poly_pools={"001": [1, 2], "003": [3, 4], "005": [5]},
+                       extra=["--pack-mode", "county_shards",
+                              "--nad-ids-slicing", "oid", "--nad-ids-batch", "10"])
+    import gzip as _gz
+    d10 = base / "s10" / "nad"
+    got10 = {p.name: len(_gz.open(p, "rt", encoding="utf-8").read().strip().splitlines())
+             for p in sorted(d10.glob("*.ndjson.gz"))}
+    man10 = json.loads((base / "s10" / "MANIFEST.json").read_text(encoding="utf-8"))
+    sh10 = man10.get("shards") or []
+    nad10 = nad_of(base / "s10")
+    res10 = {
+        "退出0": rc10 == 0,
+        "三县片存在": all(f"NAD-US-DE-1000{i}-{k}.ndjson.gz" in got10
+                         for i, k in ((1, "kent"), (3, "new_castle"), (5, "sussex"))),
+        "溢出包存在": "NAD-US-DE-OUTOFSTATE.ndjson.gz" in got10,
+        "分片行数正确": sorted(got10.values()) == [1, 2, 2, 2],
+        "MANIFEST分片清单": len(sh10) == 4,
+        "双摘要齐全": all(len(s.get("sha256_gz", "")) == 64 and len(s.get("sha256_raw", "")) == 64
+                          for s in sh10),
+        "三数咬合": nad10.get("coverage_pct") == 100.0 and nad10.get("official_count") == 7,
+        "命名统一": all(p.name.startswith(("NAD-US-DE-", "TIGER-US-DE-", "OA-US-DE-",
+                                          "OVERTURE-US-DE"))
+                        or p.name in ("MANIFEST.json", "RELEASE_NOTES.md")
+                        for p in (base / "s10").rglob("*") if p.is_file()),
+    }
+    results["S10"] = all(res10.values())
+    print(f"  分片: {got10}")
+    print(f"  coverage={nad10.get('coverage_pct')}%｜溢出={nad10.get('overflow_rows')}｜"
+          f"县界重复={nad10.get('boundary_duplicate_rows')}｜shards={len(sh10)}")
+    bad10 = [k for k, v in res10.items() if not v]
+    print("S10 判定：", "✅ 通过" if results["S10"] else f"❌ 失败 {bad10}")
+
     shutil.rmtree(base, ignore_errors=True)
-    print("\n总判定：", "✅ 九个场景全部符合预期" if all(results.values()) else f"❌ {results}")
+    print("\n总判定：", "✅ 十个场景全部符合预期" if all(results.values()) else f"❌ {results}")
     return 0 if all(results.values()) else 1
 
 

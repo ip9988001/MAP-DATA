@@ -401,6 +401,19 @@ def _nad_collect_ids_capped(fx: Fetcher, bbox, err_log: Path, label: str = "",
                                               "requests": 0, "max_depth": 0,
                                               "root_count": None}
     bb_str = ",".join(str(v) for v in bbox)
+    # ★ OID 区间二分（通用：几何是矩形还是多边形都行，大县也不会撞 400k）
+    if getattr(fx.args, "nad_ids_slicing", "quadrant") == "oid":
+        base = {"geometry": bb_str, "geometryType": "esriGeometryEnvelope",
+                "inSR": "4326", "spatialRel": "esriSpatialRelIntersects"}
+        ids, ost = _nad_ids_by_oid_ranges(fx, base, err_log, label or "[state]")
+        cnt = ost.get("count")
+        stats["leaves"] += 1 if ids else 0
+        stats["cap_hits"] += ost["splits"]
+        stats["requests"] += ost["queries"]
+        stats["max_depth"] = max(stats["max_depth"], ost["max_depth"])
+        if depth == 0:
+            stats["root_count"] = cnt
+        return ids, stats
     ids = _nad_ids_only(fx, bb_str, err_log, label or "[state]")
     stats["requests"] += 1
     if not ids:
@@ -426,6 +439,75 @@ def _nad_collect_ids_capped(fx: Fetcher, bbox, err_log: Path, label: str = "",
         sub, _ = _nad_collect_ids_capped(fx, qb, err_log, f"{label}.q{i + 1}",
                                         depth + 1, stats)
         out.extend(sub)
+    return list(dict.fromkeys(out)), stats
+
+
+def _nad_oid_bounds(fx: Fetcher, base: dict, err_log: Path, label: str = ""):
+    """用聚合一次性拿 (min OBJECTID, max OBJECTID, count)，不拉全量 ids。"""
+    stats = json.dumps([
+        {"statisticType": "min", "onStatisticField": "OBJECTID", "outStatisticFieldName": "mn"},
+        {"statisticType": "max", "onStatisticField": "OBJECTID", "outStatisticFieldName": "mx"},
+        {"statisticType": "count", "onStatisticField": "OBJECTID", "outStatisticFieldName": "n"},
+    ])
+    payload = _esri_post_query(fx, {**base, "outStatistics": stats, "f": "json"},
+                               err_log, f"{label}:stats")
+    if payload.get("error"):
+        return None, None, None
+    feats = payload.get("features") or []
+    if not feats:
+        return None, None, 0
+    at = feats[0].get("attributes") or {}
+    mn, mx, n = at.get("mn"), at.get("mx"), at.get("n")
+    return (int(mn) if mn is not None else None,
+            int(mx) if mx is not None else None,
+            int(n) if n is not None else None)
+
+
+def _nad_ids_by_oid_ranges(fx: Fetcher, base: dict, err_log: Path,
+                           label: str = "", max_depth: int = 24):
+    """★ 通用主键清单获取：按 OBJECTID 区间二分，直到每段 ids < 400,000。
+
+    为什么不继续用 bbox 四象限：
+      · 几何是**多边形**（县界）时根本没法切矩形；
+      · 大县（如 LA 约 270 万）连县级 ids 也会撞 400k 静默上限。
+    OBJECTID 区间是**纯属性切分**，跟几何/属性过滤完全正交：不重、不漏、可递推。
+
+    `base` 是除 where 以外的查询参数（几何、spatialRel、inSR 等）。
+    """
+    out: list = []
+    stats = {"queries": 0, "splits": 0, "max_depth": 0, "truncated_leaves": 0}
+    mn, mx, n = _nad_oid_bounds(fx, base, err_log, label)
+    stats["queries"] += 1
+    stats["count"] = n
+    if n == 0 or mn is None or mx is None:
+        return [], stats
+    stack = [(mn, mx + 1, 0)]
+    while stack:
+        lo, hi, depth = stack.pop()
+        where = f"OBJECTID >= {lo} AND OBJECTID < {hi}"
+        node = {**base, "where": where}
+        # ★ 逐段先问 count：这样即使服务端上限不是 400k（或有其它隐式限制），
+        #   也能用“拿到的手数 != count”当场发现被截断，不依赖任何魔法数字。
+        _, _, seg_n = _nad_oid_bounds(fx, node, err_log, f"{label}[{lo}-{hi})")
+        stats["queries"] += 1
+        payload = _esri_post_query(fx, {**node, "returnIdsOnly": "true", "f": "json"},
+                                   err_log, f"{label}[{lo}-{hi})")
+        stats["queries"] += 1
+        stats["max_depth"] = max(stats["max_depth"], depth)
+        ids = [i for i in (payload.get("objectIds") or []) if isinstance(i, int)]
+        complete = (not payload.get("error")) and len(ids) < NAD_IDS_LIST_CAP \
+            and (seg_n is None or len(ids) == seg_n)
+        if complete:
+            out.extend(ids)
+            continue
+        if hi - lo <= 1 or depth >= max_depth:
+            out.extend(ids)           # 退化：拿多少算多少，交给上层 count 对账暴露
+            stats["truncated_leaves"] += 1
+            continue
+        mid = (lo + hi) // 2
+        stats["splits"] += 1
+        stack.append((mid, hi, depth + 1))
+        stack.append((lo, mid, depth + 1))
     return list(dict.fromkeys(out)), stats
 
 
@@ -1489,6 +1571,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="ids 模式下单块超这个行数就自动降级到 tract/网格")
     ap.add_argument("--nad-ids-max-depth", type=int, default=NAD_IDS_MAX_DEPTH,
                     help="主键清单被 400k 上限截断时四象限递归的最大层数（默认 6）")
+    ap.add_argument("--nad-ids-slicing", choices=["quadrant", "oid"], default="quadrant",
+                    help="主键清单分段方式：quadrant=四象限递归（仅矩形，v0 默认）｜"
+                         "oid=OBJECTID 区间二分（通用，多边形/大县也能用）")
     ap.add_argument("--nad-shards", choices=["county", "grid", "none"], default="county",
                     help="降级链一级切块：county=按县（默认）｜grid=州 bbox 网格｜none=整州")
     ap.add_argument("--nad-grid", type=int, default=2, help="--nad-shards grid 时的 N（N×N）")

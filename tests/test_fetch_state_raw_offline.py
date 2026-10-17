@@ -16,9 +16,11 @@
                             叶子逐个对齐、汇总 == 州级 count、门禁放行（模拟真实 RI 事故）
   S8 四源自证 + 元数据   → MANIFEST 的 completeness（四源对账）/ quality（State 分布）/
                             row_counts / 全文 sha256 全部到位（P0+P2）
+  S9 OID 区间二分        → 主键清单撞 400k 上限时按 OBJECTID 区间二分补齐（v1 通用切法）
 """
 import io
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -166,8 +168,23 @@ def fake_http_json(url, params=None, **kw):
 
 
 # ---------------- ids 模式（POST / fs._post_json）----------------
+def _oid_range(where: str):
+    m = re.match(r"OBJECTID >= (\d+) AND OBJECTID < (\d+)", str(where or ""))
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
 def fake_post(url, params, timeout=180):
     params = params or {}
+    if params.get("outStatistics"):
+        bb = _bbox_of(params)
+        pool = _ids_for(bb)
+        rng = _oid_range(params.get("where"))
+        if rng:
+            pool = [o for o in pool if rng[0] <= o < rng[1]]
+        CALLS["post"].append({"kind": "stats", "bbox": bb})
+        return {"features": [{"attributes": {"mn": min(pool) if pool else None,
+                                            "mx": max(pool) if pool else None,
+                                            "n": len(pool)}}]}
     if str(params.get("returnCountOnly", "")).lower() == "true":
         bb = _bbox_of(params)
         CALLS["post"].append({"kind": "count", "bbox": bb})
@@ -179,6 +196,9 @@ def fake_post(url, params, timeout=180):
         if is_state and FAKE["ids_fail_state"]:
             return {"error": "HTTP 400 fake Cannot perform query"}
         pool = _ids_for(bb)
+        rng = _oid_range(params.get("where"))
+        if rng:
+            pool = [o for o in pool if rng[0] <= o < rng[1]]
         # 模拟 Esri 服务端静默上限：不报错，只少给
         if FAKE["ids_cap"] and len(pool) > FAKE["ids_cap"]:
             pool = pool[:FAKE["ids_cap"]]
@@ -381,8 +401,27 @@ def main():
     bad8 = [k for k, v in res.items() if not v]
     print("S8 判定：", "✅ 通过" if results["S8"] else f"❌ 失败 {bad8}")
 
+    # ---------- S9 OID 区间二分（通用版破 400k 上限）----------
+    rc9, _ = scenario("S9 OID 区间二分", base / "s9", mode="ids",
+                      official=12, main_pool=[], ids_target=range(1, 13),
+                      ids_cap=6, extra=["--nad-ids-slicing", "oid", "--nad-ids-batch", "10"])
+    nd9 = base / "s9" / "nad" / "nad_us_de_full.ndjson"
+    n9 = len(nd9.read_text().splitlines()) if nd9.exists() else 0
+    nad9 = nad_of(base / "s9")
+    kinds9 = [c["kind"] for c in CALLS["post"]]
+    results["S9"] = (rc9 == 0 and n9 == 12
+                     and nad9.get("official_count") == 12
+                     and nad9.get("coverage_pct") == 100.0
+                     and nad9.get("missing_ids") == 0
+                     and kinds9.count("stats") >= 1        # 先聚合拿 min/max/count
+                     and kinds9.count("ids_only") >= 2)    # 区间被拆开多次取
+    print(f"NAD 行数={n9}（期望12）｜coverage={nad9.get('coverage_pct')}%｜"
+          f"stats调用={kinds9.count('stats')}｜ids_only调用={kinds9.count('ids_only')}｜"
+          f"上限命中={nad9.get('ids_cap_hits')}")
+    print("S9 判定：", "✅ 通过" if results["S9"] else "❌ 失败")
+
     shutil.rmtree(base, ignore_errors=True)
-    print("\n总判定：", "✅ 八个场景全部符合预期" if all(results.values()) else f"❌ {results}")
+    print("\n总判定：", "✅ 九个场景全部符合预期" if all(results.values()) else f"❌ {results}")
     return 0 if all(results.values()) else 1
 
 

@@ -86,6 +86,32 @@ python bots/fetch_state_raw.py --state DE --publish-release
    注意空壳判定**走结构不走体积**：合法的列清单 `nad_full_columns.json` 只有 908 字节，
    而真正的空壳是 680 字节、`features: []` 的 geojson —— 体积一样小，只能靠结构区分。
 
+## NAD 抓取策略：ids 模式（主路径）
+
+旧路径（`--nad-mode cursor`，游标翻页 `orderByFields + where OID > last`）在 RI 全州实测失败：
+Providence 县缩页 1000→500→250→125→100 全被 400 拒，12 万条拿不到（缺 28.4%）。
+
+**根因**：每次翻页都让服务端重算一次「空间矩形交集 + 按 OBJECTID 排序」，
+数据密、框大、游标深时触发服务端成本熔断。这不是能靠重试治好的。
+
+**新主路径（`--nad-mode ids`，默认）**：
+
+1. `returnIdsOnly=true` → 一次拿回全量主键清单（轻量、无排序、无翻页）；
+2. `objectIds` 每批 500 个点名取数 → **无游标、无 offset、成本恒定，服务端走主键索引秒回**；
+3. 某批失败 → **立即拆半重试**（一直拆到单条），不原样重发；
+4. 最后**硬对账**：已取 OID 集合必须 == `returnIdsOnly` 集合，差一条就报错、不发 Release。
+
+⚠️ **两条铁坑**：
+- `objectIds` 批取**必须走 HTTP POST**（表单 body）。500 个 8~9 位 ID 拼出来 4.5~9 KB，
+  塞进 GET query string 会被前置网关直接 414 / 400 打回。
+- 失败的完整响应体落 `nad/nad_http_errors.log`（不再只截 200 字符）。
+
+**自适应降级链**（州级 `returnIdsOnly` 都拿不到时才启用）：
+`县 → tract（vintage 2020，从 TIGER TRACT 小包算 bbox）→ 0.02° 网格`，
+单块超过 `--nad-split-threshold`（默认 5 万行）也会自动降级。
+
+**并发默认降到 2**：4 并发很可能撞上按 IP 的限速（Providence 跑得最久、最先被打）。
+
 ## 维护备忘
 
 - 四源端点常量仍集中在 `bots/dover_fetch.py`（单一事实来源），换代只改那一处。

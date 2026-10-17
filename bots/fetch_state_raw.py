@@ -39,6 +39,9 @@ import subprocess
 import sys
 import time
 import zipfile
+import urllib.error
+import urllib.parse
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -274,6 +277,245 @@ def _nad_official_count(fx: Fetcher, bbox_str: str):
     return payload.get("count")
 
 
+# --------------------------------------------------------------------------- POST 通道
+def _post_json(url: str, params: dict, timeout: int = 180) -> dict:
+    """★★ objectIds 批取**必须**走 HTTP POST（表单 body）。
+
+    500 个 8~9 位 OBJECTID 拼成 `objectIds=98123456,98123457,...` 是 4,500~9,000 字节，
+    塞进 GET 的 query string 会被 Esri 前置网关直接 414 URI Too Long / 400 打回。
+    改用 POST 表单后每批 500~800 个稳如泰山。
+    出错时把**完整响应体**带回来（原来只截 200 字符，诊断信息根本不够）。
+    """
+    body = urllib.parse.urlencode(params, doseq=True).encode("utf-8")
+    req = urllib.request.Request(url, data=body, headers={
+        "User-Agent": "Mozilla/5.0 (compatible; world-us-map-data/1.0; +https://github.com/ip9988001/World-US-Map-Data)",
+        "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
+        "Accept": "application/json",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as exc:
+        detail = ""
+        try:
+            detail = exc.read().decode("utf-8", "replace")[:4000]
+        except Exception:  # noqa: BLE001
+            pass
+        return {"error": f"HTTP {exc.code} {exc.reason} | body={detail}"}
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"{type(exc).__name__}: {str(exc)[:300]}"}
+
+
+def _dump_error(err_log: Path, label: str, params: dict, err) -> None:
+    """把失败的完整请求参数 + 完整响应体追加落盘，供事后归因。"""
+    try:
+        rec = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "label": label,
+               "params": {k: (v if k != "objectIds" else f"<{len(str(v).split(','))} ids>")
+                          for k, v in params.items()},
+               "objectIds_head": str(params.get("objectIds", ""))[:200],
+               "error": str(err)[:4000]}
+        with err_log.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _esri_post_query(fx: Fetcher, params: dict, err_log: Path, label: str,
+                     tries: int = 4) -> dict:
+    """POST 查询 + 指数退避重试；失败的完整响应落盘。"""
+    delay = 2.0
+    last = ""
+    for i in range(1, tries + 1):
+        payload = _post_json(f"{df.NAD_OFFICIAL}/query", params, timeout=fx.args.nad_timeout)
+        err = payload.get("error")
+        if not err:
+            return payload
+        last = str(err)[:4000]
+        _dump_error(err_log, f"{label} try{i}", params, last)
+        if i < tries:
+            log(f"⚠️ {label} 第 {i}/{tries} 次被拒：{last[:110].replace(chr(10), ' ')} → {delay:.0f}s 后重试")
+            time.sleep(delay)
+            delay = min(delay * 2, 30)
+    return {"error": last}
+
+
+# --------------------------------------------------------------------------- IDS 主路径
+def _nad_ids_only(fx: Fetcher, bbox_str: str, err_log: Path, label: str = "") -> list:
+    """第一步：`returnIdsOnly=true` 拿主键清单（一次轻量请求，不做排序、不翻页）。"""
+    payload = _esri_post_query(fx, {
+        "where": "1=1", "geometry": bbox_str, "geometryType": "esriGeometryEnvelope",
+        "inSR": "4326", "spatialRel": "esriSpatialRelIntersects",
+        "returnIdsOnly": "true", "f": "json",
+    }, err_log, f"ids_only{label}")
+    if payload.get("error"):
+        return []
+    ids = payload.get("objectIds") or []
+    return [i for i in ids if isinstance(i, int)]
+
+
+def _nad_one_batch(fx: Fetcher, chunk: list, fields: list[str], err_log: Path,
+                   label: str) -> list | None:
+    """按 objectIds 点名取一批属性（POST）。失败返回 None，由上层缩批重试。
+
+    ★ 这里故意**不重试同一批**（tries=1）：如果 400 是“批太大/URL 太长”引起的，
+      原样重发十次也是十次 400，浪费时间。正确姿势是**立即拆半**（拆到单条），
+      真正的瞬时抖动由最后那次“硬对账 + 补拉”兼顾。
+    """
+    payload = _esri_post_query(fx, {
+        "objectIds": ",".join(str(i) for i in chunk),
+        "outFields": ",".join(fields),
+        "returnGeometry": "true",
+        "outSR": "4326",
+        "f": "json",
+    }, err_log, label, tries=1)
+    if payload.get("error"):
+        return None
+    feats = payload.get("features") or []
+    out = []
+    for feat in feats:
+        attrs = dict(feat.get("attributes") or {})
+        geom = feat.get("geometry") or {}
+        attrs["_lon"], attrs["_lat"] = geom.get("x"), geom.get("y")
+        out.append(attrs)
+    return out
+
+
+def _nad_fetch_by_ids(fx: Fetcher, ids: list, fields: list[str], oid: str, fh, seen: set,
+                      err_log: Path) -> dict:
+    """第二/三步：分批点名取数（无游标、无 offset、成本恒定）+ 失败缩批重试。"""
+    batch = max(50, int(fx.args.nad_ids_batch))
+    stats = {"batches": 0, "rows": 0, "shrinks": 0, "failed_batches": 0, "batch_size": batch}
+    pending = [ids[i:i + batch] for i in range(0, len(ids), batch)]
+    total = len(pending)
+    done = 0
+    while pending:
+        chunk = pending.pop(0)
+        got = _nad_one_batch(fx, chunk, fields, err_log, f"ids_batch[{done + 1}/{total}]")
+        if got is None:
+            if len(chunk) > 1:          # 任何一条失败就拆半重试（一直拆到单条）
+                mid = len(chunk) // 2
+                pending.insert(0, chunk[mid:])
+                pending.insert(0, chunk[:mid])
+                stats["shrinks"] += 1
+                continue
+            stats["failed_batches"] += 1
+            done += 1
+            continue
+        stats["batches"] += 1
+        done += 1
+        for attrs in got:
+            o = attrs.get(oid)
+            if o is None or o in seen:
+                continue
+            seen.add(o)
+            fh.write(json.dumps(attrs, ensure_ascii=False) + "\n")
+            stats["rows"] += 1
+        if done % 50 == 0:
+            log(f"NAD 批取进度 {done}/{total} 批｜已落 {stats['rows']:,} 行｜缩批 {stats['shrinks']} 次")
+    return stats
+
+
+# --------------------------------------------------------------------------- 自适应降级链
+def _grid_bboxes(bbox, n: int = 2) -> list[dict]:
+    """把 bbox 均分成 n×n 网格（纯几何、零依赖、完整覆盖、互不重叠）。"""
+    W, S, E, N = [float(v) for v in bbox]
+    n = max(2, int(n))
+    xs = [W + (E - W) * i / n for i in range(n + 1)]
+    ys = [S + (N - S) * j / n for j in range(n + 1)]
+    return [{"key": f"grid_{i}{j}", "bbox": (xs[i], ys[j], xs[i + 1], ys[j + 1])}
+            for i in range(n) for j in range(n)]
+
+
+def _tract_bboxes(fx: Fetcher) -> list[dict]:
+    """第三级切块：Census Tract。一州一个小包，pyshp 读 bbox，**GEOID 11 位 + vintage 2020**。
+
+    TIGER/Line 的 TRACT 包同时也是 `geo_units` 表要用的东西 —— 一次下载，两件事都办。
+    注意 tract 编号 10 年一换版（TIGER2024 里是 2020 版），manifest 必须锁 vintage。
+    """
+    if "tract_bboxes" in fx.cache:
+        return fx.cache["tract_bboxes"]
+    out: list[dict] = []
+    url = f"{fx.cfg['_endpoints']['tiger_base']}/TRACT/tl_2024_{fx.cfg['state_fips']}_tract.zip"
+    try:
+        import shapefile  # noqa: PLC0415
+        blob = df.http_get(url, timeout=fx.args.tiger_timeout)
+        d = fx.dir("tiger")
+        path = d / f"tl_2024_{fx.cfg['state_fips']}_tract.zip"
+        path.write_bytes(blob)
+        with zipfile.ZipFile(io.BytesIO(blob)) as zf:
+            shp_name = next((n for n in zf.namelist() if n.endswith(".shp")), None)
+            dbf_name = next((n for n in zf.namelist() if n.endswith(".dbf")), None)
+            if shp_name and dbf_name:
+                reader = shapefile.Reader(shp=io.BytesIO(zf.read(shp_name)),
+                                          dbf=io.BytesIO(zf.read(dbf_name)))
+                for shape, rec in zip(reader.shapes(), reader.records()):
+                    a = rec.as_dict()
+                    geoid = str(a.get("GEOID") or "")
+                    b = list(shape.bbox)
+                    if len(b) != 4 or not geoid:
+                        continue
+                    out.append({"key": f"tract_{geoid}", "bbox": tuple(b), "vintage": "2020"})
+        log(f"TIGER tract 边界：{len(out)} 个（vintage 2020）")
+    except Exception as exc:  # noqa: BLE001
+        log(f"⚠️ tract 边界获取失败（跳过这一级）：{type(exc).__name__}: {str(exc)[:160]}")
+    fx.cache["tract_bboxes"] = out
+    return out
+
+
+def _bbox_overlap(a, b) -> bool:
+    return not (a[2] < b[0] or b[2] < a[0] or a[3] < b[1] or b[3] < a[1])
+
+
+def _subdivide(fx: Fetcher, bbox_str: str, depth: int) -> list[dict]:
+    """给一个抓不动的 bbox 找下一级切块：tract 优先，没 tract 就 2×2 网格。"""
+    bbox = tuple(float(v) for v in bbox_str.split(","))
+    tracts = [t for t in _tract_bboxes(fx) if _bbox_overlap(t["bbox"], bbox)]
+    if tracts:
+        return tracts
+    return _grid_bboxes(bbox, 2)
+
+
+def _collect_ids(fx: Fetcher, bbox_str: str, err_log: Path, label: str = "",
+                 depth: int = 0) -> list:
+    """取某块的全量主键；失败或超阈值就自动降级到下一级切块（县 → tract → 网格）。"""
+    ids = _nad_ids_only(fx, bbox_str, err_log, label=f"[{label}]")
+    threshold = int(fx.args.nad_split_threshold)
+    if ids and len(ids) <= threshold:
+        return ids
+    if depth >= 2:
+        return ids                       # 到底了，有多少算多少（后面还有硬对账兜底）
+    subs = _subdivide(fx, bbox_str, depth)
+    log(f"NAD 降级：{label}（{len(ids):,} 条）→ 拆成 {len(subs)} 个下级块（depth={depth + 1}）")
+    out: list = []
+    for i, s in enumerate(subs):
+        bb = ",".join(str(v) for v in s["bbox"])
+        got = _collect_ids(fx, bb, err_log, label=f"{label}.{s['key']}", depth=depth + 1)
+        out.extend(got)
+    return list(dict.fromkeys(out))
+
+
+def _nad_shards(fx: Fetcher) -> list[dict]:
+    """一级切块（按县）；给 cursor 模式与降级链用。"""
+    mode = fx.args.nad_shards
+    if mode == "none":
+        return [{"key": "whole", "bbox": tuple(fx.cfg["bbox"])}]
+    if mode == "grid":
+        return _grid_bboxes(fx.cfg["bbox"], int(fx.args.nad_grid))
+    bnd = _county_boundaries(fx)          # 县界同时给 TIGER 用 → 只查一次
+    shards = []
+    for c in fx.cfg["counties"]:
+        rec = bnd.get(f"county_{c['key']}")
+        if not rec:
+            continue
+        bb = _geojson_bbox(rec["payload"])
+        if bb:
+            shards.append({"key": f"cty_{c['key']}", "bbox": bb})
+    if len(shards) < 2:
+        log(f"⚠️ 可用县界只有 {len(shards)} 个 → 退回「州 bbox 切 2×2 网格」")
+        return _grid_bboxes(fx.cfg["bbox"], 2)
+    return shards
+
+
 def _geojson_bbox(payload: dict):
     """从 Polygon / MultiPolygon 的 rings 里算包围盒（只取坐标，不碰属性）。"""
     xs, ys = [], []
@@ -294,47 +536,9 @@ def _geojson_bbox(payload: dict):
     return (min(xs), min(ys), max(xs), max(ys))
 
 
-def _nad_shards(fx: Fetcher) -> list[dict]:
-    """★ 按县切块：每个县一个独立 bbox，多个县并发翻页。
-
-    为什么快：
-      1) 并发 —— 3 个县 = 3 条流水线同时翻，整州顺次翻是 400+ 次串行往返；
-      2) 小框 —— 单个县的 envelope 比整州小一个量级，服务端单次响应明显更快。
-    为什么不会漏：
-      每个县的多边形都被自己的 bbox 包住 → 县 bbox 的并集 ⊇ 整州；框重叠只会产生
-      重复行，重复行在合并阶段按 OID 去掉 —— 是「超集 + 去重」，不是「近似」。
-    """
-    mode = fx.args.nad_shards
-    if mode == "none":
-        return [{"key": "whole", "bbox": tuple(fx.cfg["bbox"])}]
-    if mode == "grid":
-        n = max(2, int(fx.args.nad_grid))
-        W, S, E, N = fx.cfg["bbox"]
-        xs = [W + (E - W) * i / n for i in range(n + 1)]
-        ys = [S + (N - S) * j / n for j in range(n + 1)]
-        return [{"key": f"grid_{i}{j}", "bbox": (xs[i], ys[j], xs[i + 1], ys[j + 1])}
-                for i in range(n) for j in range(n)]
-    # county（默认）
-    bnd = _county_boundaries(fx)          # 县界同时给 TIGER 用 → 只查一次
-    shards = []
-    for c in fx.cfg["counties"]:
-        rec = bnd.get(f"county_{c['key']}")
-        if not rec:
-            continue
-        bb = _geojson_bbox(rec["payload"])
-        if bb:
-            shards.append({"key": f"cty_{c['key']}", "bbox": bb})
-    if len(shards) < 2:
-        log(f"⚠️ 可用县界只有 {len(shards)} 个 → 退回「州 bbox 切 2×2 网格」并发")
-        fx.args.nad_shards = "grid"
-        fx.args.nad_grid = 2
-        return _nad_shards(fx)
-    return shards
-
-
 def _nad_shard_worker(fx: Fetcher, shard: dict, fields: list[str], oid: str,
                       page: int, limit: int) -> dict:
-    """单个分片的独立翻页：写自己的 part 文件，线程之间零共享。"""
+    """cursor 模式下的单分片翻页（保留作备选路径；ids 模式不用它）。"""
     bbox_str = ",".join(str(v) for v in shard["bbox"])
     part = fx.dir("nad") / f"nad_part_{shard['key']}.ndjson"
     seen: set = set()
@@ -361,86 +565,142 @@ def harvest_nad(fx: Fetcher) -> None:
     if oid not in fields:
         fields = [oid] + fields
     maxrc = int(meta.get("maxRecordCount") or 2000)
-    # ★ 单页硬上限 1000：实测 rc=2000（=maxRecordCount）会被 400 拒，rc=1000 稳定返回满页
     page = int(fx.args.nad_page) if fx.args.nad_page else min(maxrc, 1000)
     page = max(1, min(page, maxrc, 1000))
-
-    shards = _nad_shards(fx)
-    workers = max(1, min(int(fx.args.nad_workers), len(shards)))
-    official = _nad_official_count(fx, fx.cfg["bbox_str"])
-    log(f"NAD 切块={fx.args.nad_shards}｜分片={len(shards)}｜并发={workers}｜单页={page}｜"
-        f"官方 count(整州)={official}｜分片：{[s['key'] for s in shards]}")
-
-    # ---- 分片并发抓取（单分片失败不拖垮整轮，留待整州自愈兜底）----
-    parts, shard_detail = [], []
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        futs = {ex.submit(_nad_shard_worker, fx, s, fields, oid, page, fx.args.nad_max): s
-                for s in shards}
-        for fut in as_completed(futs):
-            s = futs[fut]
-            try:
-                info = fut.result()
-                parts.append(info.pop("part"))
-                shard_detail.append(info)
-            except Exception as exc:  # noqa: BLE001
-                shard_detail.append({"shard": s["key"], "bbox": list(s["bbox"]),
-                                     "error": f"{type(exc).__name__}: {str(exc)[:200]}"})
-                log(f"⚠️ NAD 分片 {s['key']} 失败：{str(exc)[:160]}（交由整州自愈兜底）")
-
-    # ---- 合并去重（县 bbox 互相重叠 → 必须按 OID 去重）----
+    err_log = d / "nad_http_errors.log"
+    if err_log.exists():
+        err_log.unlink()
     ndjson = d / f"nad_us_{fx.cfg['state'].lower()}_full.ndjson"
     seen: set = set()
-    with ndjson.open("w", encoding="utf-8") as out:
-        for part in parts:
-            with part.open(encoding="utf-8") as fh:
-                for line in fh:
-                    if not line.strip():
-                        continue
-                    o = json.loads(line).get(oid)
-                    if o is not None:
-                        if o in seen:
-                            continue
-                        seen.add(o)
-                    out.write(line if line.endswith("\n") else line + "\n")
-        added = len(seen)
-        dup_dropped = sum(x.get("rows", 0) for x in shard_detail) - added
 
-        # ---- 整州自愈：合并后仍少于官方 count 的 99% → 4 分块重拉补缺口 ----
+    # ================= cursor 模式（备选路径）=================
+    if fx.args.nad_mode == "cursor":
+        shards = _nad_shards(fx)
+        workers = max(1, min(int(fx.args.nad_workers), len(shards)))
+        official = _nad_official_count(fx, fx.cfg["bbox_str"])
+        log(f"NAD 模式=cursor｜切块={fx.args.nad_shards}｜分片={len(shards)}｜并发={workers}｜单页={page}")
+        parts, shard_detail = [], []
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futs = {ex.submit(_nad_shard_worker, fx, s, fields, oid, page, fx.args.nad_max): s
+                    for s in shards}
+            for fut in as_completed(futs):
+                s = futs[fut]
+                try:
+                    info = fut.result()
+                    parts.append(info.pop("part"))
+                    shard_detail.append(info)
+                except Exception as exc:  # noqa: BLE001
+                    shard_detail.append({"shard": s["key"], "error": f"{type(exc).__name__}: {str(exc)[:200]}"})
+        with ndjson.open("w", encoding="utf-8") as out:
+            for part in parts:
+                with part.open(encoding="utf-8") as fh:
+                    for line in fh:
+                        if not line.strip():
+                            continue
+                        o = json.loads(line).get(oid)
+                        if o is not None:
+                            if o in seen:
+                                continue
+                            seen.add(o)
+                        out.write(line if line.endswith("\n") else line + "\n")
+        for p in parts:
+            p.unlink(missing_ok=True)
+        added = len(seen)
+
+        # 整州自愈：合并后仍少于官方 count 的 99% → 4 分块重拉补缺口
         repair = None
         if official and added < int(official) * 0.99:
             W, S, E, N = fx.cfg["bbox"]
             midx, midy = (W + E) / 2, (S + N) / 2
             tiles = [(W, S, midx, midy), (midx, S, E, midy), (W, midy, midx, N), (midx, midy, E, N)]
             extra_rows = extra_pages = 0
-            for tl in tiles:
-                n, p = _nad_bbox_pull(fh=out, seen=seen, fx=fx,
-                                      bbox_str=",".join(str(v) for v in tl), fields=fields,
-                                      oid=oid, limit=fx.args.nad_max, page=page, tag="[repair]")
-                extra_rows += n
-                extra_pages += p
+            with ndjson.open("a", encoding="utf-8") as out:
+                for tl in tiles:
+                    n, p = _nad_bbox_pull(fh=out, seen=seen, fx=fx,
+                                          bbox_str=",".join(str(v) for v in tl), fields=fields,
+                                          oid=oid, limit=fx.args.nad_max, page=page, tag="[repair]")
+                    extra_rows += n
+                    extra_pages += p
             added += extra_rows
             repair = {"tiles": 4, "pages": extra_pages, "rows_added": extra_rows, "after": added}
-    for p in parts:
-        p.unlink(missing_ok=True)
+
+        truncated = bool(official) and added < int(official)
+        fx.add(d / "nad_native_metadata.json", ndjson)
+        fx.note("nad", "warn-truncated" if truncated else "ok", channel="A-official-rest",
+                mode="cursor", pagination=f"cursor: orderByFields={oid} ASC",
+                shard_mode=fx.args.nad_shards, shard_count=len(shards), workers=workers,
+                shard_detail=shard_detail, page_size=page, repair=repair,
+                rows_fetched=added, official_count_in_bbox=official, truncated=truncated,
+                bytes=ndjson.stat().st_size, elapsed=round(time.time() - t0, 1))
+        if truncated:
+            fx.problem(f"NAD 拉取 {added} 行 < 官方 count {official}")
+        if added == 0:
+            fx.problem("NAD 一行都没拉到")
+        return
+
+    # ================= ids 模式（主路径：returnIdsOnly + objectIds 批取）=================
+    log(f"NAD 模式=ids｜单批={fx.args.nad_ids_batch}｜降级阈值={fx.args.nad_split_threshold} 行")
+
+    target = _nad_ids_only(fx, fx.cfg["bbox_str"], err_log, label="[state]")
+    fallback_used = None
+    if not target:
+        log("⚠️ 州级 returnIdsOnly 失败/为空 → 启用自适应降级链（县 → tract → 0.02°网格）")
+        ids: list = []
+        for s in _nad_shards(fx):
+            bb = ",".join(str(v) for v in s["bbox"])
+            ids.extend(_collect_ids(fx, bb, err_log, label=s["key"]))
+        target = list(dict.fromkeys(ids))
+        fallback_used = f"adaptive:{fx.args.nad_shards}"
+    else:
+        log(f"NAD 官方主键清单：{len(target):,} 个")
+
+    if not target:
+        fx.add(d / "nad_native_metadata.json")
+        fx.note("nad", "error", channel="A-official-rest", mode="ids",
+                error="returnIdsOnly 与降级链都没拿到主键", elapsed=round(time.time() - t0, 1))
+        fx.problem("NAD 一个主键都没拿到（见 nad_http_errors.log）")
+        return
+
+    with ndjson.open("w", encoding="utf-8") as fh:
+        stats = _nad_fetch_by_ids(fx, target, fields, oid, fh, seen, err_log)
+
+    # ---- 硬对账：已取 OID 集合必须 == 官方主键集合（差一条都不放过）----
+    missing = [i for i in target if i not in seen]
+    retried = 0
+    if missing:
+        log(f"⚠️ 首次批取缺 {len(missing):,} 条 → 用更小批次补一次")
+        old_batch = fx.args.nad_ids_batch
+        fx.args.nad_ids_batch = min(100, max(25, old_batch // 5))
+        with ndjson.open("a", encoding="utf-8") as fh:
+            r2 = _nad_fetch_by_ids(fx, missing, fields, oid, fh, seen, err_log)
+        retried = r2.get("rows", 0)
+        fx.args.nad_ids_batch = old_batch
+        missing = [i for i in target if i not in seen]
 
     (d / "nad_full_columns.json").write_text(
         json.dumps({"fields": fields, "fields_n": len(fields), "object_id_field": oid},
                    ensure_ascii=False, indent=1), encoding="utf-8")
-
-    truncated = bool(official) and added < int(official)
+    got = len(seen)
+    truncated = bool(missing)
     fx.add(d / "nad_native_metadata.json", ndjson, d / "nad_full_columns.json")
+    if err_log.exists() and err_log.stat().st_size > 0:
+        fx.add(err_log)
     fx.note("nad", "warn-truncated" if truncated else "ok",
-            channel="A-official-rest", endpoint=df.NAD_OFFICIAL,
-            pagination=f"cursor: orderByFields={oid} ASC + where {oid} > last_id",
-            shard_mode=fx.args.nad_shards, shard_count=len(shards), workers=workers,
-            shard_detail=shard_detail, cross_shard_dup_dropped=max(0, dup_dropped),
-            page_size=page, repair=repair, streamed_to=rel(ndjson),
-            fields_n=len(fields), rows_fetched=added, official_count_in_bbox=official,
-            truncated=truncated, bytes=ndjson.stat().st_size, elapsed=round(time.time() - t0, 1))
+            channel="A-official-rest", mode="ids",
+            fetch_strategy="returnIdsOnly → objectIds 批取（POST）→ 集合硬对账",
+            ids_batch=stats.get("batch_size"), batches=stats.get("batches"),
+            shrinks=stats.get("shrinks"), failed_batches=stats.get("failed_batches"),
+            fallback=fallback_used, retry_pass_rows=retried,
+            official_ids=len(target), rows_fetched=got, missing_ids=len(missing),
+            missing_sample=[str(i) for i in missing[:5]],
+            truncated=truncated, streamed_to=rel(ndjson), fields_n=len(fields),
+            bytes=ndjson.stat().st_size, elapsed=round(time.time() - t0, 1))
     if truncated:
-        fx.problem(f"NAD 拉取 {added} 行 < 官方 count {official}（已尝试分片 + 4 分块自愈）")
-    if added == 0:
+        fx.problem(f"NAD 硬对账失败：缺 {len(missing):,}/{len(target):,} 个主键"
+                   f"（样本 {missing[:5]}，详见 nad_http_errors.log）")
+    if got == 0:
         fx.problem("NAD 一行都没拉到")
+
 
 # --------------------------------------------------------------------------- B. Overture
 def _count_parquet(path: Path) -> int | None:
@@ -922,10 +1182,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--nad-max", type=int, default=800000)
     ap.add_argument("--nad-page", type=int, default=0, help="留空 = 用图层 maxRecordCount（硬上限 1000）")
     ap.add_argument("--nad-timeout", type=int, default=300)
+    ap.add_argument("--nad-mode", choices=["ids", "cursor"], default="ids",
+                    help="ids=returnIdsOnly+objectIds POST 批取（默认，治本）｜cursor=旧游标翻页（备选）")
+    ap.add_argument("--nad-ids-batch", type=int, default=500,
+                    help="每批 objectIds 个数（500~800 安全，必须走 POST）")
+    ap.add_argument("--nad-split-threshold", type=int, default=50000,
+                    help="ids 模式下单块超这个行数就自动降级到 tract/网格")
     ap.add_argument("--nad-shards", choices=["county", "grid", "none"], default="county",
-                    help="NAD 切块方式：county=按县并发（默认）｜grid=按州 bbox 网格并发｜none=整州单框顺次")
+                    help="降级链一级切块：county=按县（默认）｜grid=州 bbox 网格｜none=整州")
     ap.add_argument("--nad-grid", type=int, default=2, help="--nad-shards grid 时的 N（N×N）")
-    ap.add_argument("--nad-workers", type=int, default=4, help="NAD 分片并发数（网络 IO 密集，4~8 都安全）")
+    ap.add_argument("--nad-workers", type=int, default=2, help="cursor 模式分片并发（建议 2，避免撞按 IP 限速）")
     ap.add_argument("--overture-format", choices=["parquet", "geojson"], default="parquet")
     ap.add_argument("--overture-timeout", type=int, default=7200)
     ap.add_argument("--oa-max-mb", type=int, default=800)
@@ -943,7 +1209,7 @@ def main(argv: list[str] | None = None) -> int:
     out.mkdir(parents=True, exist_ok=True)
 
     log(f"目标：US-{state}（{cfg.get('name')}）｜{len(cfg['counties'])} 县｜"
-        f"BBox {cfg['bbox_str']}｜tag={tag}｜out={rel(out)}")
+        f"BBox {cfg['bbox_str']}｜tag={tag}｜nad_mode={args.nad_mode}｜out={rel(out)}")
 
     fx = Fetcher(cfg, out, args)
     only = {s.strip() for s in args.only.split(",") if s.strip()}

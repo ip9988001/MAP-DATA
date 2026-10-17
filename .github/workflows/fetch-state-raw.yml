@@ -16,16 +16,24 @@ on:
         description: Release tag（留空 = raw-US-<州>-v1）
         default: ""
       nad_max:
-        description: NAD 最大行数（全州一般给足 800000）
+        description: NAD 最大行数（ids 模式不再依赖它，保留兼容）
         default: "800000"
+      nad_mode:
+        description: NAD 抓取模式（ids=returnIdsOnly+objectIds POST 批取，治本；cursor=旧游标翻页备选）
+        type: choice
+        options: [ids, cursor]
+        default: ids
+      nad_ids_batch:
+        description: 每批 objectIds 个数（500~800 安全，必须走 POST）
+        default: "500"
       nad_shards:
-        description: NAD 切块方式（county=按县并发提速 / grid=网格并发 / none=整州顺次）
+        description: 降级链一级切块（county=按县 / grid=网格 / none=整州）
         type: choice
         options: [county, grid, none]
         default: county
       nad_workers:
-        description: NAD 分片并发数（网络 IO 密集，4~8 都安全）
-        default: "4"
+        description: 分片并发数（建议 2，避免撞按 IP 限速）
+        default: "2"
       overture_format:
         description: Overture 落地格式（parquet 优先，失败自动回落 geojson）
         type: choice
@@ -62,7 +70,7 @@ jobs:
 
       - name: 打印本次运行参数与州配置档
         run: |
-          echo "state=${{ inputs.state }} tag=${{ inputs.tag }} nad_max=${{ inputs.nad_max }} fmt=${{ inputs.overture_format }} shards=${{ inputs.nad_shards }} workers=${{ inputs.nad_workers }}"
+          echo "state=${{ inputs.state }} tag=${{ inputs.tag }} nad_mode=${{ inputs.nad_mode }} ids_batch=${{ inputs.nad_ids_batch }} shards=${{ inputs.nad_shards }} workers=${{ inputs.nad_workers }} fmt=${{ inputs.overture_format }}"
           sed -n '1,40p' rules/US/state_roster.yaml
 
       - name: 单州四源全量抓取（runner 侧下载，本机零下载）
@@ -71,7 +79,7 @@ jobs:
           RELEASE_TAG: ${{ inputs.tag }}
         run: |
           set -u
-          ARGS="--state ${{ inputs.state }} --nad-max ${{ inputs.nad_max }} --overture-format ${{ inputs.overture_format }} --nad-shards ${{ inputs.nad_shards }} --nad-workers ${{ inputs.nad_workers }}"
+          ARGS="--state ${{ inputs.state }} --nad-max ${{ inputs.nad_max }} --overture-format ${{ inputs.overture_format }} --nad-mode ${{ inputs.nad_mode }} --nad-ids-batch ${{ inputs.nad_ids_batch }} --nad-shards ${{ inputs.nad_shards }} --nad-workers ${{ inputs.nad_workers }}"
           if [ -n "$RELEASE_TAG" ]; then ARGS="$ARGS --tag $RELEASE_TAG"; fi
           if [ "${{ inputs.publish_release }}" = "true" ]; then ARGS="$ARGS --publish-release"; fi
           echo "python bots/fetch_state_raw.py $ARGS"
